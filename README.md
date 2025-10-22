@@ -1,5 +1,5 @@
 <p align="center">
-<img src="https://github.com/user-attachments/assets/a462b412-0d2a-43b4-b72f-a8113db99490" width="300">
+<img src="https://github.com/user-attachments/assets/5cb569c6-34cc-4ee4-b7a4-c961714234ce" width="500">
 </p>
 
 ## Soft Data Diode Video Streaming System 
@@ -110,11 +110,21 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 }
 ```
 
-### 2. Example Caddy Configuration
+### 2. Example Web Frontend Configuration (Caddy)
+
+_While of course you can use any web front end you want (Apache, Nginx, Traefik, etc), or even expose the builtin web service directly, Caddy is used for simplicity._
+
+Add an HTTP simple auth gate by adding a username and hashed password:
+```bash
+caddy hash-password --plaintext "mysecret"
+```
 
 ```caddyfile
 yourservername {
     tls internal
+    basicauth {
+        user output-of-caddy-hash-password
+    }
     handle {
         reverse_proxy 127.0.0.1:8000
     }
