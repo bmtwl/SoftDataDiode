@@ -57,12 +57,12 @@ graph TD
 
 ### Sender Side
 ```bash
-pip install opencv-python cryptography selenium numpy
+pip install opencv-python-headless cryptography selenium numpy
 ```
 
 ### Receiver Side
 ```bash
-pip install opencv-python cryptography numpy
+pip install opencv-python-headless cryptography numpy
 ```
 
 ## Installation
