@@ -4,37 +4,47 @@ import argparse
 import logging
 import time
 import struct
+import math
 from collections import deque, defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import cv2
 import numpy as np
 from cryptography.fernet import Fernet
 
-class DataDiodeReceiver:
-    def __init__(self, udp_host, udp_port, http_host, http_port, key, buffer_size=100, debug=False):
-        self.udp_host = udp_host
-        self.udp_port = udp_port
-        self.http_host = http_host
-        self.http_port = http_port
-        self.buffer_size = buffer_size
-        self.debug = debug
+class ThreadingHTTPServer(HTTPServer):
+    """Handle requests in separate threads"""
+    def process_request(self, request, client_address):
+        thread = threading.Thread(
+            target=self.process_request_thread,
+            args=(request, client_address)
+        )
+        thread.daemon = True
+        thread.start()
 
-        self.logger = self.setup_logging(debug)
-
+    def process_request_thread(self, request, client_address):
         try:
-            self.cipher = Fernet(key.encode())
-            self.logger.debug("Encryption key validated")
-        except Exception as e:
-            self.logger.error(f"Invalid encryption key: {e}")
-            raise
+            self.finish_request(request, client_address)
+        except Exception:
+            self.handle_error(request, client_address)
+        finally:
+            self.shutdown_request(request)
+
+class StreamReceiver:
+    def __init__(self, config):
+        self.config = config
+        self.logger = logging.getLogger('StreamReceiver')
+
+        # Initialize encryption
+        self.cipher = Fernet(config['key'].encode())
 
         # Frame buffer (circular buffer)
-        self.frame_buffer = deque(maxlen=buffer_size)
+        self.frame_buffer = deque(maxlen=config['buffer_size'])
         self.buffer_lock = threading.Lock()
 
         # Fragment reassembly buffer
-        self.fragment_buffer = defaultdict(dict)  # seq_num -> {frag_index: data}
-        self.fragment_metadata = {}  # seq_num -> total_frags
+        self.fragment_buffer = defaultdict(dict)
+        self.fragment_metadata = {}
+        self.fragment_timestamps = {}
 
         # Statistics
         self.stats = {
@@ -43,27 +53,37 @@ class DataDiodeReceiver:
             'frames_buffered': 0,
             'decryption_errors': 0,
             'fragments_received': 0,
-            'frames_reassembled': 0
+            'frames_reassembled': 0,
+            'incomplete_frames': 0
         }
 
         # UDP socket
         self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # Increase receive buffer size
-        self.udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8*1024*1024)  # 8MB
-        self.udp_sock.bind((udp_host, udp_port))
-        self.logger.info(f"UDP socket bound to {udp_host}:{udp_port}")
+        self.udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8*1024*1024)
+        self.udp_sock.bind((config['udp_host'], config['udp_port']))
 
-        # HTTP server
-        self.http_server = None
+        # Cleanup thread for old fragments
+        self.cleanup_thread = threading.Thread(target=self.cleanup_old_fragments, daemon=True)
+        self.cleanup_thread.start()
 
-    def setup_logging(self, debug=False):
-        """Setup logging configuration"""
-        level = logging.DEBUG if debug else logging.INFO
-        logging.basicConfig(
-            level=level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        return logging.getLogger(__name__)
+    def cleanup_old_fragments(self):
+        """Background thread to clean up old incomplete fragments"""
+        while True:
+            time.sleep(30)
+            current_time = time.time()
+
+            old_seqs = []
+            for seq_num, timestamp in self.fragment_timestamps.items():
+                if current_time - timestamp > 10:
+                    old_seqs.append(seq_num)
+
+            for seq_num in old_seqs:
+                if seq_num in self.fragment_buffer:
+                    del self.fragment_buffer[seq_num]
+                if seq_num in self.fragment_metadata:
+                    del self.fragment_metadata[seq_num]
+                del self.fragment_timestamps[seq_num]
+                self.stats['incomplete_frames'] += 1
 
     def reassemble_frame(self, sequence_number):
         """Reassemble frame from fragments"""
@@ -71,20 +91,21 @@ class DataDiodeReceiver:
         total_frags = self.fragment_metadata.get(sequence_number, 0)
 
         if len(fragments) == total_frags and total_frags > 0:
-            # Reassemble in order
-            frame_data = b''.join([fragments[i] for i in range(total_frags)])
+            try:
+                frame_data = b''.join([fragments[i] for i in range(total_frags)])
 
-            # Clean up
-            del self.fragment_buffer[sequence_number]
-            del self.fragment_metadata[sequence_number]
+                del self.fragment_buffer[sequence_number]
+                del self.fragment_metadata[sequence_number]
+                del self.fragment_timestamps[sequence_number]
 
-            return frame_data
+                return frame_data
+            except Exception as e:
+                self.logger.error(f"Frame {sequence_number}: Error reassembling: {e}")
+                return None
         return None
 
     def udp_receiver(self):
         """Background thread to receive UDP packets"""
-        self.logger.info(f"Listening for UDP packets on {self.udp_host}:{self.udp_port}")
-
         while True:
             try:
                 data, addr = self.udp_sock.recvfrom(65535)
@@ -93,18 +114,11 @@ class DataDiodeReceiver:
                 try:
                     decrypted_data = self.cipher.decrypt(data)
                     self.stats['packets_decrypted'] += 1
-                except InvalidToken:
-                    self.stats['decryption_errors'] += 1
-                    self.logger.warning(f"Decryption failed for packet from {addr}")
-                    continue
                 except Exception as e:
                     self.stats['decryption_errors'] += 1
-                    self.logger.error(f"Decryption error: {e}")
                     continue
 
-                # Parse header: sequence_number(4) + frag_index(2) + total_frags(2)
                 if len(decrypted_data) < 8:
-                    self.logger.warning("Packet too short to contain header")
                     continue
 
                 header = decrypted_data[:8]
@@ -113,15 +127,13 @@ class DataDiodeReceiver:
 
                 self.stats['fragments_received'] += 1
 
-                # Store fragment
                 self.fragment_buffer[sequence_number][frag_index] = fragment_data
                 self.fragment_metadata[sequence_number] = total_frags
+                self.fragment_timestamps[sequence_number] = time.time()
 
-                # Try to reassemble frame
                 frame_data = self.reassemble_frame(sequence_number)
 
                 if frame_data:
-                    # Convert to frame
                     nparr = np.frombuffer(frame_data, np.uint8)
                     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
@@ -131,138 +143,130 @@ class DataDiodeReceiver:
                             self.stats['frames_buffered'] += 1
                             self.stats['frames_reassembled'] += 1
 
-                        if self.debug:
-                            self.logger.debug(f"Reassembled frame {sequence_number}, buffer size: {len(self.frame_buffer)}")
-                    else:
-                        self.logger.warning(f"Failed to decode frame {sequence_number}")
-
             except Exception as e:
                 self.logger.error(f"Error processing packet: {e}")
 
-    def start_udp_receiver(self):
-        """Start UDP receiver in background thread"""
+    def start(self):
+        """Start the receiver"""
         udp_thread = threading.Thread(target=self.udp_receiver, daemon=True)
         udp_thread.start()
-        self.logger.info("UDP receiver thread started")
         return udp_thread
 
-    def start_http_server(self):
-        """Start HTTP server"""
-        class FrameHandler(BaseHTTPRequestHandler):
-            def log_message(self, format, *args):
-                self.server.receiver.logger.info(f"{self.address_string()} - {format % args}")
+class StreamHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass  # Disable default logging
 
-            def do_GET(self):
-                if self.path == '/':
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
+    def do_GET(self):
+        if self.path == '/' or self.path == '/index.html':
+            self.serve_index()
+        elif self.path == '/stream':
+            self.serve_stream()
+        elif self.path == '/stats':
+            self.serve_stats()
+        else:
+            self.send_error(404)
+
+    def serve_index(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+
+        html = """
+        <html>
+            <head>
+                <title>Data Diode Stream</title>
+            </head>
+            <body>
+                <h1>Data Diode Stream</h1>
+                <img src="/stream" width="800" height="450" />
+                <p><a href="/stats">Statistics</a></p>
+            </body>
+        </html>
+        """
+        self.wfile.write(html.encode())
+
+    def serve_stream(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
+        self.send_header('Cache-Control', 'no-cache')
+        self.end_headers()
+
+        last_seq = -1
+        while not self.wfile.closed:
+            frame = None
+            current_seq = -1
+
+            with self.server.receiver.buffer_lock:
+                if self.server.receiver.frame_buffer:
+                    current_seq, frame = self.server.receiver.frame_buffer[-1]
+
+            if frame is not None and current_seq != last_seq:
+                frame_resized = cv2.resize(frame, (800, 450))
+                _, buffer = cv2.imencode('.jpg', frame_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                frame_data = buffer.tobytes()
+
+                try:
+                    self.wfile.write(b'--frame\r\n')
+                    self.send_header('Content-type', 'image/jpeg')
+                    self.send_header('Content-length', str(len(frame_data)))
                     self.end_headers()
+                    self.wfile.write(frame_data)
+                    self.wfile.write(b'\r\n')
+                    self.wfile.flush()
+                except:
+                    break
 
-                    html = """
-                    <html>
-                        <head>
-                            <title>Data Diode Stream</title>
-                        </head>
-                        <body>
-                            <h1>Data Diode PoC</h1>
-                            <img src="/stream" width="1280" height="720" />
-                        </body>
-                    </html>
-                    """
-                    self.wfile.write(html.encode())
+                last_seq = current_seq
 
-                elif self.path == '/stream':
-                    self.send_response(200)
-                    self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
-                    self.end_headers()
+            time.sleep(0.05)
 
-                    last_seq = -1
-                    while True:
-                        frame = None
-                        current_seq = -1
+    def serve_stats(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
 
-                        with self.server.receiver.buffer_lock:
-                            if self.server.receiver.frame_buffer:
-                                current_seq, frame = self.server.receiver.frame_buffer[-1]
-
-                        if frame is not None and current_seq != last_seq:
-                            # Resize for streaming
-                            frame_resized = cv2.resize(frame, (800, 450))
-                            _, buffer = cv2.imencode('.jpg', frame_resized)
-                            frame_data = buffer.tobytes()
-
-                            self.wfile.write(b'--frame\r\n')
-                            self.send_header('Content-type', 'image/jpeg')
-                            self.send_header('Content-length', str(len(frame_data)))
-                            self.end_headers()
-                            self.wfile.write(frame_data)
-                            self.wfile.write(b'\r\n')
-
-                            last_seq = current_seq
-                            if self.server.receiver.debug:
-                                self.server.receiver.logger.debug(f"Streamed frame {current_seq}")
-
-                        time.sleep(0.03)
-
-                elif self.path == '/stats':
-                    self.send_response(200)
-                    self.send_header('Content-type', 'application/json')
-                    self.end_headers()
-
-                    import json
-                    stats_json = json.dumps(self.server.receiver.stats, indent=2)
-                    self.wfile.write(stats_json.encode())
-
-                else:
-                    self.send_error(404)
-
-        self.http_server = HTTPServer((self.http_host, self.http_port), FrameHandler)
-        self.http_server.receiver = self
-
-        self.logger.info(f"HTTP server starting on {self.http_host}:{self.http_port}")
-        self.http_server.serve_forever()
-
-    def run(self):
-        """Main run method"""
-        self.start_udp_receiver()
-
-        try:
-            self.start_http_server()
-        except KeyboardInterrupt:
-            self.logger.info("Shutting down...")
-        except Exception as e:
-            self.logger.error(f"HTTP server error: {e}")
-        finally:
-            self.udp_sock.close()
-            if self.http_server:
-                self.http_server.shutdown()
+        import json
+        stats_json = json.dumps(self.server.receiver.stats, indent=2)
+        self.wfile.write(stats_json.encode())
 
 def main():
     parser = argparse.ArgumentParser(description='Data Diode Receiver')
-    parser.add_argument('--udp-host', default='0.0.0.0', help='UDP listen host (default: 0.0.0.0)')
-    parser.add_argument('--udp-port', type=int, required=True, help='UDP listen port')
-    parser.add_argument('--http-host', default='127.0.0.1', help='HTTP server host (default: 127.0.0.1)')
-    parser.add_argument('--http-port', type=int, required=True, help='HTTP server port')
+    parser.add_argument('--udp-host', default='0.0.0.0', help='UDP host to listen on')
+    parser.add_argument('--udp-port', type=int, required=True, help='UDP port to listen on')
+    parser.add_argument('--http-host', default='127.0.0.1', help='HTTP host to serve on')
+    parser.add_argument('--http-port', type=int, required=True, help='HTTP port to serve on')
     parser.add_argument('--key', required=True, help='Base64 encoded encryption key')
-    parser.add_argument('--buffer-size', type=int, default=100, help='Frame buffer size (default: 100)')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    parser.add_argument('--buffer-size', type=int, default=100, help='Frame buffer size')
 
     args = parser.parse_args()
 
-    try:
-        receiver = DataDiodeReceiver(
-            udp_host=args.udp_host,
-            udp_port=args.udp_port,
-            http_host=args.http_host,
-            http_port=args.http_port,
-            key=args.key,
-            buffer_size=args.buffer_size,
-            debug=args.debug
-        )
+    # Setup logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-        receiver.run()
-    except Exception as e:
-        print(f"Failed to start receiver: {e}")
+    # Configuration
+    config = {
+        'udp_host': args.udp_host,
+        'udp_port': args.udp_port,
+        'key': args.key,
+        'buffer_size': args.buffer_size
+    }
+
+    # Initialize receiver
+    receiver = StreamReceiver(config)
+
+    # Start UDP receiver
+    receiver.start()
+
+    # Start HTTP server with threading
+    http_server = ThreadingHTTPServer((args.http_host, args.http_port), StreamHandler)
+    http_server.receiver = receiver
+
+    print(f"HTTP server starting on {args.http_host}:{args.http_port}")
+    try:
+        http_server.serve_forever()
+    except KeyboardInterrupt:
+        print("Shutting down...")
+        receiver.udp_sock.close()
 
 if __name__ == "__main__":
     main()
