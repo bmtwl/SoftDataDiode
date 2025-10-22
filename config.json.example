@@ -1,0 +1,33 @@
+{
+  "server": {
+    "http_host": "127.0.0.1",
+    "http_port": 8000,
+    "debug": false
+  },
+  "streams": {
+    "dashboard": {
+      "name": "Main Dashboard",
+      "description": "Primary monitoring dashboard",
+      "udp_host": "0.0.0.0",
+      "udp_port": 5005,
+      "key": "your-base64-key-here",
+      "buffer_size": 100
+    },
+    "camera1": {
+      "name": "Security Camera 1",
+      "description": "Front entrance camera",
+      "udp_host": "0.0.0.0",
+      "udp_port": 5006,
+      "key": "your-base64-key-here",
+      "buffer_size": 100
+    },
+    "reports": {
+      "name": "Daily Reports",
+      "description": "Automated reporting system",
+      "udp_host": "0.0.0.0",
+      "udp_port": 5007,
+      "key": "your-base64-key-here",
+      "buffer_size": 50
+    }
+  }
+}
