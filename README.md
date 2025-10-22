@@ -112,13 +112,14 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 ### 2. Example Web Frontend Configuration (Caddy)
 
-_While of course you can use any web front end you want (Apache, Nginx, Traefik, etc), or even expose the builtin web service directly, Caddy is used for simplicity._
+_While of course you can use any web front end you want (Apache, Nginx, Traefik, etc), or even expose the builtin web service directly, Caddy is shown here for simplicity._
 
-Add an HTTP simple auth gate by adding a username and hashed password:
+#### Add an HTTP basic auth gate by adding a username and hashed password:
 ```bash
 caddy hash-password --plaintext "mysecret"
 ```
 
+#### Edit Caddy Config eg `/etc/caddy/Caddyfile`
 ```caddyfile
 yourservername {
     tls internal
