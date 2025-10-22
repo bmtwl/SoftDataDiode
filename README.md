@@ -1,4 +1,8 @@
-# Soft Data Diode Video Streaming System
+<p align="center">
+<img src="https://github.com/user-attachments/assets/a462b412-0d2a-43b4-b72f-a8113db99490" width="300">
+</p>
+
+## Soft Data Diode Video Streaming System 
 
 A secure, one-way video streaming solution that implements a software-based data diode for transmitting web content and RTSP streams to a cloud server without exposing any return path.
 
