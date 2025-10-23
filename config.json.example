@@ -19,7 +19,8 @@
       "udp_host": "0.0.0.0",
       "udp_port": 5006,
       "key": "your-base64-key-here",
-      "buffer_size": 100
+      "buffer_size": 100,
+      "display_resolution": "1600x900"
     },
     "reports": {
       "name": "Daily Reports",
