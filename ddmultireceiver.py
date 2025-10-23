@@ -6,11 +6,17 @@ import time
 import struct
 import json
 import os
+import base64
 from collections import deque, defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import cv2
 import numpy as np
 from cryptography.fernet import Fernet
+
+# Embedded favicon (BASE64 encoded 16x16 ICO file)
+FAVICON_ICO = """
+AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAQAACMuAAAjLgAAAAAAAAAAAAD/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////9vb2/+Dg4P/9/f3//////////////////v7+//7+/v///////////////////////////////////////////+Dg4P89PT3/goKC/+bm5v///////v7+/5KSkv+SkpL//v7+/////////////////////////////v7+///////f39//Hh4e/wAAAP8yMjL/oqKi//Hx8f9WVlb/VlZW//39/f/+/v7//v7+//7+/v///////v7+/5OTk/9UVFT/TExM/woKCv8AAAD/AAAA/wcHB/88PDz/Hh4e/x0dHf9WVlb/VlZW/1NTU/+Tk5P//v7+//7+/v+Tk5P/VFRU/0xMTP8KCgr/AAAA/wAAAP8HBwf/PDw8/x4eHv8dHR3/VlZW/1ZWVv9TU1P/k5OT//7+/v///////v7+///////f39//Hh4e/wAAAP8yMjL/oqKi//Hx8f9WVlb/VlZW//39/f/+/v7//v7+//7+/v//////////////////////4ODg/z09Pf+CgoL/5ubm///////+/v7/kpKS/5KSkv/+/v7///////////////////////////////////////b29v/g4OD//f39//////////////////7+/v/+/v7/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+"""
 
 class StreamReceiver:
     def __init__(self, name, config, debug=False):
@@ -18,6 +24,9 @@ class StreamReceiver:
         self.config = config
         self.debug = debug
         self.logger = self.setup_logging(debug)
+
+        # Parse resolutions
+        self.display_resolution = self.parse_resolution(config.get('display_resolution', '1280x720'))
 
         # Initialize encryption
         try:
@@ -35,6 +44,10 @@ class StreamReceiver:
         self.fragment_buffer = defaultdict(dict)
         self.fragment_metadata = {}
         self.fragment_timestamps = {}
+
+        # Freshness tracking
+        self.last_frame_timestamp = 0
+        self.freshness_lock = threading.Lock()
 
         # Statistics
         self.stats = {
@@ -56,6 +69,15 @@ class StreamReceiver:
         # Cleanup thread for old fragments
         self.cleanup_thread = threading.Thread(target=self.cleanup_old_fragments, daemon=True)
         self.cleanup_thread.start()
+
+    def parse_resolution(self, resolution_str):
+        """Parse resolution string like '1280x720' into (width, height) tuple"""
+        try:
+            width, height = map(int, resolution_str.lower().split('x'))
+            return (width, height)
+        except Exception as e:
+            self.logger.warning(f"Invalid resolution '{resolution_str}', using default 1280x720: {e}")
+            return (1280, 720)
 
     def setup_logging(self, debug=False):
         """Setup logging configuration"""
@@ -168,12 +190,30 @@ class StreamReceiver:
                             self.stats['frames_buffered'] += 1
                             self.stats['frames_reassembled'] += 1
 
+                        # Update freshness timestamp
+                        with self.freshness_lock:
+                            self.last_frame_timestamp = time.time()
+
                         self.logger.debug(f"Frame {sequence_number}: Successfully reassembled and buffered")
                     else:
                         self.logger.warning(f"Failed to decode frame {sequence_number}")
 
             except Exception as e:
                 self.logger.error(f"Error processing packet: {e}")
+
+    def get_freshness_status(self):
+        """Get current freshness status"""
+        with self.freshness_lock:
+            if self.last_frame_timestamp == 0:
+                return {"status": "red", "seconds": 999999}
+
+            elapsed = time.time() - self.last_frame_timestamp
+            if elapsed < 30:
+                return {"status": "green", "seconds": elapsed}
+            elif elapsed < 300:  # 5 minutes
+                return {"status": "yellow", "seconds": elapsed}
+            else:
+                return {"status": "red", "seconds": elapsed}
 
     def start(self):
         """Start the receiver"""
@@ -202,9 +242,24 @@ class ThreadingHTTPServer(HTTPServer):
 
 class StreamHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        self.server.receiver.logger.info(f"{self.address_string()} - {format % args}")
+        self.server.receiver.logger.debug(f"{self.address_string()} - {format % args}")
 
     def do_GET(self):
+        # Favicon
+        if self.path == '/favicon.ico':
+            self.send_response(200)
+            self.send_header('Content-type', 'image/x-icon')
+            self.end_headers()
+
+            # Decode and serve the embedded favicon
+            try:
+                favicon_data = base64.b64decode(FAVICON_ICO)
+                self.wfile.write(favicon_data)
+            except:
+                # If base64 decode fails, serve as raw data
+                self.wfile.write(FAVICON_ICO.encode())
+            return
+
         # Landing page
         if self.path == '/' or self.path == '':
             self.send_response(200)
@@ -215,30 +270,88 @@ class StreamHandler(BaseHTTPRequestHandler):
             <html>
                 <head>
                     <title>Data Diode Streams</title>
+                    <link rel="icon" type="image/x-icon" href="/favicon.ico">
                     <style>
-                        body { font-family: Arial, sans-serif; margin: 40px; }
-                        .stream { border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 5px; }
-                        .stream h3 { margin-top: 0; color: #333; }
-                        .stream a { display: inline-block; margin: 5px; padding: 8px 15px; background: #007cba; color: white; text-decoration: none; border-radius: 3px; }
+                        body { font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5; }
+                        .header { background: #007cba; color: white; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
+                        .stream { border: 1px solid #ddd; margin: 15px 0; padding: 20px; border-radius: 5px; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; align-items: center; }
+                        .stream-info { flex-grow: 1; }
+                        .stream h3 { margin-top: 0; color: #333; margin-bottom: 5px; }
+                        .stream p { color: #666; margin: 5px 0; }
+                        .stream a { display: inline-block; margin: 5px; padding: 10px 20px; background: #007cba; color: white; text-decoration: none; border-radius: 3px; }
                         .stream a:hover { background: #005a87; }
+                        .freshness-indicator { display: flex; align-items: center; margin-left: 20px; }
+                        .status-circle { width: 15px; height: 15px; border-radius: 50%; margin-right: 8px; }
+                        .green { background-color: #4CAF50; }
+                        .yellow { background-color: #FFC107; }
+                        .red { background-color: #F44336; }
+                        .freshness-text { font-size: 0.9em; color: #666; min-width: 120px; }
                     </style>
                 </head>
                 <body>
-                    <h1>Available Data Diode Streams</h1>
+                    <div class="header">
+                        <h1>Data Diode Streams</h1>
+                    </div>
+                    <div id="streams-container">
             """
 
+            # Add stream entries
             for stream_name, stream in self.server.receiver.streams.items():
                 stream_config = self.server.receiver.config['streams'][stream_name]
                 html += f"""
-                    <div class="stream">
-                        <h3>{stream_config['name']}</h3>
-                        <p>{stream_config['description']}</p>
-                        <p><strong>Path:</strong> /{stream_name}</p>
-                        <a href="/{stream_name}">View Stream</a>
+                    <div class="stream" id="stream-{stream_name}">
+                        <div class="stream-info">
+                            <h3>{stream_config['name']}</h3>
+                            <p>{stream_config['description']}</p>
+                            <a href="/{stream_name}">View Stream</a>
+                        </div>
+                        <div class="freshness-indicator">
+                            <div class="status-circle red" id="circle-{stream_name}"></div>
+                            <div class="freshness-text" id="text-{stream_name}">No data</div>
+                        </div>
                     </div>
                 """
 
             html += """
+                    </div>
+                    <script>
+                        function updateFreshness() {
+                            const streams = """ + json.dumps(list(self.server.receiver.streams.keys())) + """;
+
+                            streams.forEach(streamName => {
+                                fetch(`/${streamName}/freshness`)
+                                    .then(response => response.json())
+                                    .then(data => {
+                                        const circle = document.getElementById(`circle-${streamName}`);
+                                        const text = document.getElementById(`text-${streamName}`);
+
+                                        circle.className = `status-circle ${data.status}`;
+
+                                        if (data.status === 'green') {
+                                            text.textContent = 'Live';
+                                        } else if (data.status === 'yellow') {
+                                            const minutes = Math.floor(data.seconds / 60);
+                                            const seconds = Math.floor(data.seconds % 60);
+                                            if (minutes > 0) {
+                                                text.textContent = `${minutes}m ${seconds}s ago`;
+                                            } else {
+                                                text.textContent = `${seconds}s ago`;
+                                            }
+                                        } else {
+                                            text.textContent = 'Stale';
+                                        }
+                                    })
+                                    .catch(error => {
+                                        console.error('Error updating freshness:', error);
+                                    });
+                            });
+                        }
+
+                        // Update every 5 seconds
+                        setInterval(updateFreshness, 5000);
+                        // Initial update
+                        updateFreshness();
+                    </script>
                 </body>
             </html>
             """
@@ -249,6 +362,20 @@ class StreamHandler(BaseHTTPRequestHandler):
             stream_name = self.path[1:-7]  # Remove leading / and trailing /stream
             if stream_name in self.server.receiver.streams:
                 self.stream_video(stream_name)
+            else:
+                self.send_error(404)
+
+        # Freshness status endpoint
+        elif self.path.endswith('/freshness'):
+            stream_name = self.path[1:-10]  # Remove leading / and trailing /freshness
+            if stream_name in self.server.receiver.streams:
+                stream = self.server.receiver.streams[stream_name]
+                freshness = stream.get_freshness_status()
+
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(freshness).encode())
             else:
                 self.send_error(404)
 
@@ -268,7 +395,10 @@ class StreamHandler(BaseHTTPRequestHandler):
         # Stream landing pages
         elif self.path[1:] in self.server.receiver.streams:  # Remove leading /
             stream_name = self.path[1:]
+            stream = self.server.receiver.streams[stream_name]
             stream_config = self.server.receiver.config['streams'][stream_name]
+            display_res = f"{stream.display_resolution[0]}x{stream.display_resolution[1]}"
+
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
@@ -277,12 +407,70 @@ class StreamHandler(BaseHTTPRequestHandler):
             <html>
                 <head>
                     <title>{stream_config['name']} - Data Diode Stream</title>
+                    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+                    <style>
+                        body {{ font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5; }}
+                        .header {{ background: #007cba; color: white; padding: 20px; border-radius: 5px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; }}
+                        .stream-info h1 {{ margin: 0; }}
+                        .freshness-indicator {{ display: flex; align-items: center; }}
+                        .status-circle {{ width: 15px; height: 15px; border-radius: 50%; margin-right: 8px; }}
+                        .green {{ background-color: #4CAF50; }}
+                        .yellow {{ background-color: #FFC107; }}
+                        .red {{ background-color: #F44336; }}
+                        .freshness-text {{ color: white; font-size: 0.9em; min-width: 120px; }}
+                        img {{ border: 1px solid #ddd; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                        .back-link {{ display: inline-block; margin-top: 20px; padding: 10px 20px; background: #007cba; color: white; text-decoration: none; border-radius: 3px; }}
+                        .back-link:hover {{ background: #005a87; }}
+                    </style>
                 </head>
                 <body>
-                    <h1>{stream_config['name']}</h1>
-                    <p>{stream_config['description']}</p>
-                    <img src="/{stream_name}/stream" width="800" height="450" />
-                    <p><a href="/">Back to Streams</a></p>
+                    <div class="header">
+                        <div class="stream-info">
+                            <h1>{stream_config['name']}</h1>
+                            <p>{stream_config['description']}</p>
+                        </div>
+                        <div class="freshness-indicator">
+                            <div class="status-circle red" id="circle-{stream_name}"></div>
+                            <div class="freshness-text" id="text-{stream_name}">No data</div>
+                        </div>
+                    </div>
+                    <img src="/{stream_name}/stream" width="{stream.display_resolution[0]}" height="{stream.display_resolution[1]}" />
+                    <p><a href="/" class="back-link">Back to Streams</a></p>
+
+                    <script>
+                        function updateFreshness() {{
+                            fetch(`/{stream_name}/freshness`)
+                                .then(response => response.json())
+                                .then(data => {{
+                                    const circle = document.getElementById(`circle-{stream_name}`);
+                                    const text = document.getElementById(`text-{stream_name}`);
+
+                                    circle.className = `status-circle ${{data.status}}`;
+
+                                    if (data.status === 'green') {{
+                                        text.textContent = 'Live';
+                                    }} else if (data.status === 'yellow') {{
+                                        const minutes = Math.floor(data.seconds / 60);
+                                        const seconds = Math.floor(data.seconds % 60);
+                                        if (minutes > 0) {{
+                                            text.textContent = `${{minutes}}m ${{seconds}}s ago`;
+                                        }} else {{
+                                            text.textContent = `${{seconds}}s ago`;
+                                        }}
+                                    }} else {{
+                                        text.textContent = 'Stale';
+                                    }}
+                                }})
+                                .catch(error => {{
+                                    console.error('Error updating freshness:', error);
+                                }});
+                        }}
+
+                        // Update every 2 seconds for more responsive display
+                        setInterval(updateFreshness, 2000);
+                        // Initial update
+                        updateFreshness();
+                    </script>
                 </body>
             </html>
             """
@@ -294,6 +482,7 @@ class StreamHandler(BaseHTTPRequestHandler):
     def stream_video(self, stream_name):
         """Stream video directly in the request handler (blocking but in separate thread)"""
         try:
+            stream = self.server.receiver.streams[stream_name]
             self.send_response(200)
             self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
             self.send_header('Cache-Control', 'no-cache')
@@ -302,7 +491,6 @@ class StreamHandler(BaseHTTPRequestHandler):
 
             last_seq = -1
             while not self.wfile.closed:
-                stream = self.server.receiver.streams[stream_name]
                 frame = None
                 current_seq = -1
 
@@ -311,7 +499,8 @@ class StreamHandler(BaseHTTPRequestHandler):
                         current_seq, frame = stream.frame_buffer[-1]
 
                 if frame is not None and current_seq != last_seq:
-                    frame_resized = cv2.resize(frame, (800, 450))
+                    # Resize frame to display resolution
+                    frame_resized = cv2.resize(frame, stream.display_resolution)
                     _, buffer = cv2.imencode('.jpg', frame_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                     frame_data = buffer.tobytes()
 
@@ -331,7 +520,7 @@ class StreamHandler(BaseHTTPRequestHandler):
                     if stream.debug:
                         stream.logger.debug(f"Streamed frame {current_seq}")
 
-                time.sleep(0.05)  # ~20 FPS
+                time.sleep(0.05)  # Limit to ~20 FPS
         except Exception as e:
             self.server.receiver.logger.error(f"Error streaming {stream_name}: {e}")
         finally:
