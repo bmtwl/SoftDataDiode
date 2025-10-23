@@ -157,7 +157,7 @@ def capture_rtsp_stream(rtsp_url, username=None, password=None, capture_resoluti
         logger.error(f"Error capturing RTSP stream: {e}")
         return None
 
-def send_frame_fragmented(frame, cipher, sock, cloud_ip, cloud_port, sequence_number, max_packet_size=1400):
+def send_frame_fragmented(frame, cipher, sock, cloud_ip, cloud_port, sequence_number, max_packet_size=1400, jpeg_quality=60):
     """Encrypt and send frame via UDP with fragmentation"""
     logger = setup_logging(False)  # Create logger for this function
 
@@ -167,7 +167,7 @@ def send_frame_fragmented(frame, cipher, sock, cloud_ip, cloud_port, sequence_nu
 
     try:
         # Encode frame to JPEG with quality control
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 60]  # Reduced quality further
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality]  # Configurable Quality
         _, buffer = cv2.imencode('.jpg', frame, encode_param)
         data = buffer.tobytes()
 
@@ -228,6 +228,7 @@ def main():
     parser.add_argument('--max-packet-size', type=int, default=1400, help='Maximum UDP packet size (default: 1400)')
     parser.add_argument('--capture-resolution', default='1280x720', help='Capture resolution (default: 1280x720)')
     parser.add_argument('--web-capture-element', default='body', help='CSS selector for web capture element (default: body)')
+    parser.add_argument('--jpeg-quality', type=int, default=60, help='The quality of the JPEG encoder (default: 60)')
 
     args = parser.parse_args()
 
@@ -244,6 +245,10 @@ def main():
     # Parse capture resolution
     capture_resolution = parse_resolution(args.capture_resolution)
     logger.info(f"Capture resolution set to: {capture_resolution[0]}x{capture_resolution[1]}")
+
+    # Validate JPEG encoding quality value
+    if 0 < args.jpeg_quality > 100:
+        raise argparse.ArgumentTypeError(f"Quality must be between 0 and 100, inclusive.")
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     logger.debug(f"UDP socket created for {args.cloud_ip}:{args.cloud_port}")
@@ -271,7 +276,7 @@ def main():
                 logger.debug(f"Captured frame {sequence_number} with shape {frame.shape}")
             send_frame_fragmented(
                 frame, cipher, sock, args.cloud_ip, args.cloud_port,
-                sequence_number, args.max_packet_size
+                sequence_number, args.max_packet_size, args.jpeg_quality
             )
             sequence_number += 1
             time.sleep(args.interval)
