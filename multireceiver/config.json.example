@@ -10,25 +10,25 @@
       "description": "Primary monitoring dashboard",
       "udp_host": "0.0.0.0",
       "udp_port": 5005,
-      "key": "your-base64-key-here",
-      "buffer_size": 100
+      "key": "your-generated-key-here",
+      "buffer_size": 50
     },
     "camera1": {
       "name": "Security Camera 1",
       "description": "Front entrance camera",
       "udp_host": "0.0.0.0",
       "udp_port": 5006,
-      "key": "your-base64-key-here",
+      "key": "your-generated-key-here",
       "buffer_size": 100,
-      "display_resolution": "1600x900"
+      "display_resolution": "1280x720"
     },
-    "reports": {
-      "name": "Daily Reports",
-      "description": "Automated reporting system",
+    "desktop1": {
+      "name": "Desktop 1",
+      "description": "Information Kiosk desktop",
       "udp_host": "0.0.0.0",
       "udp_port": 5007,
-      "key": "your-base64-key-here",
-      "buffer_size": 50
+      "key": "your-generated-key-here",
+      "buffer_size": 100
     }
   }
 }
