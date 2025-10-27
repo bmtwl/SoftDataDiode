@@ -17,7 +17,7 @@ The data itself is encrypted with AES-256-GCM prior to being transmitted with a 
 ```mermaid
 graph TD
     subgraph "Secure Environment"
-        SOURCE[Source System<BR>Web or RTSP] --> SENDER[Data Diode Sender]
+        SOURCE[Source System<BR>Web, RTSP or VNC] --> SENDER[Data Diode Sender]
         SENDER --> SENDERPROCESSING[UDP Packets<br/>Encrypted & Fragmented]
     end
     
@@ -51,7 +51,7 @@ graph TD
 - **Opto-Isolation**: Resource is encoded as a simple image to prevent information leakage
 - **Multiple Stream Support**: Multi-receiver version handles multiple independent streams
 - **Secure Encryption**: AES-256-GCM encryption with pre-shared keys
-- **Web & RTSP Sources**: Capture web pages (with Selenium) or RTSP video streams
+- **Web, RTSP and VNC Sources**: Capture web pages (with Selenium), RTSP video streams or VNC clients (with vncsnapshot)
 
 ## Requirements
 
@@ -96,13 +96,22 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
       "udp_host": "0.0.0.0",
       "udp_port": 5005,
       "key": "your-generated-key-here",
-      "buffer_size": 100
+      "buffer_size": 50
     },
     "camera1": {
       "name": "Security Camera 1",
       "description": "Front entrance camera",
       "udp_host": "0.0.0.0",
       "udp_port": 5006,
+      "key": "your-generated-key-here",
+      "buffer_size": 100,
+      "display_resolution": "1280x720"
+    },
+    "desktop1": {
+      "name": "Desktop 1",
+      "description": "Information Kiosk desktop",
+      "udp_host": "0.0.0.0",
+      "udp_port": 5007,
       "key": "your-generated-key-here",
       "buffer_size": 100
     }
@@ -156,6 +165,18 @@ python ddsender.py \
   --cloud-port 5006 \
   --key "your-base64-key-here" \
   --interval 0.1
+```
+
+#### VNC Capture
+```bash
+python ddsender.py \
+  --mode vnc \
+  --source "vnc.example.com" \
+  --cloud-ip YOUR_CLOUD_IP \
+  --cloud-port 5006 \
+  --password ~/.vnc/passwd \
+  --key "your-base64-key-here" \
+  --interval 10
 ```
 
 ### Running the Receiver
