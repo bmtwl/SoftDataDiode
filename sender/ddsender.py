@@ -5,6 +5,7 @@ import time
 import argparse
 import struct
 import math
+import shutil
 from cryptography.fernet import Fernet
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -33,9 +34,7 @@ def create_webdriver():
     chrome_options.add_argument("--window-size=1280,720")
     chrome_options.add_argument("--disable-web-security")
     chrome_options.add_argument("--disable-features=VizDisplayCompositor")
-
-    # Suppress logging
-    chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
+    chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])  # Suppress logging
     chrome_options.add_experimental_option('useAutomationExtension', False)
 
     driver = webdriver.Chrome(options=chrome_options)
@@ -157,6 +156,67 @@ def capture_rtsp_stream(rtsp_url, username=None, password=None, capture_resoluti
         logger.error(f"Error capturing RTSP stream: {e}")
         return None
 
+def capture_vnc_display(vnc_host, vnc_password=None, vnc_display=0, capture_resolution=(1280, 720)):
+    """Capture frame from VNC display"""
+    logger = setup_logging(False)  # Create logger for this function
+
+    try:
+        # For now, we'll use a simple approach with subprocess to capture VNC with vncsnapshot
+        import subprocess
+        import tempfile
+        import os
+
+        # Create temporary file for screenshot
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+            tmp_filename = tmp_file.name
+
+        try:
+            # Build VNC connection string
+            vnc_url = f"{vnc_host}:{vnc_display}"
+
+            # Use vncsnapshot capture tool
+            commands = [
+                ['vncsnapshot', '-passwd', vnc_password, vnc_url, tmp_filename],
+            ]
+
+            success = False
+            for cmd in commands:
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+
+                    if result.returncode == 0:
+                        success = True
+                        break
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"VNC capture command timed out: {' '.join(cmd)}")
+                except Exception as e:
+                    logger.debug(f"VNC capture command failed: {' '.join(cmd)} - {e}")
+
+            if success and os.path.exists(tmp_filename) and os.path.getsize(tmp_filename) > 0:
+                # Read the captured image
+                img = cv2.imread(tmp_filename)
+                if img is not None:
+                    img = cv2.resize(img, capture_resolution)
+                    logger.debug(f"Captured VNC frame: {img.shape}")
+                    return img
+                else:
+                    logger.error("Failed to read VNC screenshot")
+            else:
+                logger.error("VNC capture failed or produced empty file")
+
+        except Exception as e:
+            logger.error(f"Error capturing VNC display: {e}")
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_filename):
+                os.unlink(tmp_filename)
+
+        return None
+
+    except Exception as e:
+        logger.error(f"Error capturing VNC display: {e}")
+        return None
+
 def send_frame_fragmented(frame, cipher, sock, cloud_ip, cloud_port, sequence_number, max_packet_size=1400, jpeg_quality=60):
     """Encrypt and send frame via UDP with fragmentation"""
     logger = setup_logging(False)  # Create logger for this function
@@ -215,20 +275,21 @@ def send_frame_fragmented(frame, cipher, sock, cloud_ip, cloud_port, sequence_nu
 
 def main():
     parser = argparse.ArgumentParser(description='Data Diode Sender')
-    parser.add_argument('--mode', choices=['web', 'rtsp'], required=True, help='Capture mode')
-    parser.add_argument('--source', required=True, help='URL for web or RTSP stream URL')
+    parser.add_argument('--mode', choices=['web', 'rtsp', 'vnc'], required=True, help='Capture mode')
+    parser.add_argument('--source', required=True, help='URL for web, RTSP stream URL, or VNC host')
     parser.add_argument('--cloud-ip', required=True, help='Cloud server IP')
     parser.add_argument('--cloud-port', type=int, required=True, help='Cloud server UDP port')
     parser.add_argument('--key', required=True, help='Base64 encoded encryption key')
     parser.add_argument('--interval', type=float, default=0.1, help='Capture interval in seconds')
     parser.add_argument('--username', help='Username for authentication')
-    parser.add_argument('--password', help='Password for authentication')
+    parser.add_argument('--password', help='Password for authentication. Password file path for vnc')
     parser.add_argument('--timeout', type=int, default=30, help='Timeout for web page loading (seconds)')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     parser.add_argument('--max-packet-size', type=int, default=1400, help='Maximum UDP packet size (default: 1400)')
     parser.add_argument('--capture-resolution', default='1280x720', help='Capture resolution (default: 1280x720)')
     parser.add_argument('--web-capture-element', default='body', help='CSS selector for web capture element (default: body)')
     parser.add_argument('--jpeg-quality', type=int, default=60, help='The quality of the JPEG encoder (default: 60)')
+    parser.add_argument('--vnc-display', type=int, default=0, help='The VNC Display Number (default: 1)')
 
     args = parser.parse_args()
 
@@ -247,7 +308,7 @@ def main():
     logger.info(f"Capture resolution set to: {capture_resolution[0]}x{capture_resolution[1]}")
 
     # Validate JPEG encoding quality value
-    if 0 < args.jpeg_quality > 100:
+    if not (0 <= args.jpeg_quality <= 100):
         raise argparse.ArgumentTypeError(f"Quality must be between 0 and 100, inclusive.")
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -261,11 +322,21 @@ def main():
         )
         logger.info(f"Web capture initialized for {args.source}")
         logger.info(f"Capturing element: {args.web_capture_element}")
-    else:  # rtsp
+    elif args.mode == 'rtsp':
         capture_func = lambda: capture_rtsp_stream(
             args.source, args.username, args.password, capture_resolution
         )
         logger.info(f"RTSP capture initialized for {args.source}")
+    else:  # vnc
+        if shutil.which('vncsnapshot'):
+            logger.debug(f"VNC Capture tool found") 
+        else:
+            logger.info(f"VNC Capture Tool vncsnapshot not found in path. Aborting!")
+            return
+        capture_func = lambda: capture_vnc_display(
+            args.source, args.password, args.vnc_display, capture_resolution
+        )
+        logger.info(f"VNC capture initialized for {args.source}")
 
     sequence_number = 0
 
