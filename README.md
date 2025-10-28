@@ -53,27 +53,38 @@ graph TD
 - **Secure Encryption**: AES-256-GCM encryption with pre-shared keys
 - **Web, RTSP and VNC Sources**: Capture web pages (with Selenium), RTSP video streams or VNC clients (with vncsnapshot)
 
-## Requirements
-
-### Sender Side
-```bash
-pip install opencv-python-headless cryptography selenium numpy
-```
-
-### Receiver Side
-```bash
-pip install opencv-python-headless cryptography numpy
-```
-
 ## Installation
 
 1. **Clone the repository:**
 ```bash
+cd /opt
 git clone https://github.com/bmtwl/SoftDataDiode.git
 cd SoftDataDiode
 ```
+2. **Create a virtual environment (optional):**
 
-2. **Generate encryption key (must be same key on both sender and receiver sides) :**
+   _A `venv` is recommended for the sender side especially, as selenium can be famously hard to get to work using OS packages._
+
+   _If you use a `venv` then you must activate it before starting any senders or receivers. To exit a `venv`, use the `deactivate` command._
+
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+3. **Install Packages:**
+
+   **Sender Side:**
+   ```bash
+   pip install opencv-python-headless cryptography selenium numpy
+   ```
+
+   **Receiver Side:**
+   ```bash
+   pip install opencv-python-headless cryptography numpy
+   ```
+
+4. **Generate encryption key (must be same key on both sender and receiver sides) :**
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
@@ -198,3 +209,23 @@ python ddreceiver.py \
 # Multi-receiver usage
 python ddmultireceiver.py --config /path/to/config.json
 ```
+
+## Troubleshooting
+
+### Selenium crashes because it can't find a chrome/chromium driver
+There are broken OS packages on Debian, at least. The recommended way to run the sender is with a `venv`.
+
+### Resource usage is too high
+There are a few strategies to reduce resource usage:
+1. Reduce the capture resolution of the image that is being sent/received.
+2. Increase the interval between captures
+3. Reduce the jpeg quality (This may make text hard to read. The default of `60` is already a good balance of quality vs size)
+4. Switch from Python to Pypy (hard)
+
+### Traffic isn't getting through to the receiver
+Check for the presence of UDP packets using something like Wireshark or `tcpdump udp and port 5005`. You should see a constant stream from the sender to the receiver on both hosts.
+Any firewalls in the path between the sender and receiver are highly likely to block this traffic, so make sure they are set up with appropriate allow rules.
+
+### Things aren't working and I'm not sure what's happening
+You can start the sender or receiver with the `--debug` flag, or turn on debugging in the `config.json` file. This should make the output very verbose.
+If this still doesn't help, please create an issue in the repo.
