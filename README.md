@@ -52,6 +52,11 @@ graph TD
 - **Multiple Stream Support**: Multi-receiver version handles multiple independent streams
 - **Secure Encryption**: AES-256-GCM encryption with pre-shared keys
 - **Web, RTSP and VNC Sources**: Capture web pages (with Selenium), RTSP video streams or VNC clients (with vncsnapshot)
+- **Freshness Monitoring**: Streams visually and programatically show whether updates are:
+    - Live - Green dot (Updated within the last 30 seconds)
+    - Stalled - Yellow dot and time since last frame (Last update was more than 30 seconds ago)
+    - Stale - Red dot (Not updated in more than 5 minutes)
+    - Freshness JSON endpoint per stream with the state and seconds since last frame (`https://host/stream/freshness`)
 
 ## Installation
 
@@ -229,3 +234,9 @@ Any firewalls in the path between the sender and receiver are highly likely to b
 ### Things aren't working and I'm not sure what's happening
 You can start the sender or receiver with the `--debug` flag, or turn on debugging in the `config.json` file. This should make the output very verbose.
 If this still doesn't help, please create an issue in the repo.
+
+## Known issues
+
+### My logs have lots of `I/O operation on closed file` events in them
+This is due to the way the Python http server flushes out connections and there is no simple workaround.
+I may do some custom exception handling in the future to clean these up, but for now they can be safely ignored.
