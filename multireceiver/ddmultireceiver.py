@@ -266,11 +266,12 @@ class StreamHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'text/html')
             self.end_headers()
 
-            html = """
+            html_title = self.server.receiver.config['server'].get('html_title', 'Data Diode Streams')
+            html = f"""
             <html>
                 <head>
-                    <title>Data Diode Streams</title>
-                    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+                    <title>{html_title}</title>"""
+            html += """        <link rel="icon" type="image/x-icon" href="/favicon.ico">
                     <style>
                         body { font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5; }
                         .header { background: #007cba; color: white; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
@@ -289,8 +290,8 @@ class StreamHandler(BaseHTTPRequestHandler):
                     </style>
                 </head>
                 <body>
-                    <div class="header">
-                        <h1>Data Diode Streams</h1>
+                    <div class="header">"""
+            html += f"""            <h1>{html_title}</h1>
                     </div>
                     <div id="streams-container">
             """
