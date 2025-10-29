@@ -490,7 +490,29 @@ class StreamHandler(BaseHTTPRequestHandler):
             self.send_header('Connection', 'close')
             self.end_headers()
 
+            # Initialize with -1 to ensure first frame is sent immediately
             last_seq = -1
+            
+            # Send the most recent frame immediately if available
+            with stream.buffer_lock:
+                if stream.frame_buffer:
+                    current_seq, frame = stream.frame_buffer[-1]
+                    if frame is not None:
+                        frame_resized = cv2.resize(frame, stream.display_resolution)
+                        _, buffer = cv2.imencode('.jpg', frame_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                        frame_data = buffer.tobytes()
+                        
+                        try:
+                            self.wfile.write(b'--frame\r\n')
+                            self.send_header('Content-type', 'image/jpeg')
+                            self.send_header('Content-length', str(len(frame_data)))
+                            self.end_headers()
+                            self.wfile.write(frame_data)
+                            self.wfile.write(b'\r\n')
+                            self.wfile.flush()
+                            last_seq = current_seq
+                        except:
+                            return
             while not self.wfile.closed:
                 frame = None
                 current_seq = -1
