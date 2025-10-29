@@ -503,13 +503,15 @@ class StreamHandler(BaseHTTPRequestHandler):
                         frame_data = buffer.tobytes()
                         
                         try:
-                            # Send as first frame in multipart stream
-                            self.wfile.write(b'--frame\r\n')
-                            self.wfile.write(b'Content-Type: image/jpeg\r\n')
-                            self.wfile.write(f'Content-Length: {len(frame_data)}\r\n\r\n'.encode())
-                            self.wfile.write(frame_data)
-                            self.wfile.write(b'\r\n')
-                            self.wfile.flush()
+                            # Send as first frame in multipart stream (twice to satisfy Chrome/Edge/Webkit)
+                            frames_to_send = 2
+                            for i in range(frames_to_send):
+                                self.wfile.write(b'--frame\r\n')
+                                self.wfile.write(b'Content-Type: image/jpeg\r\n')
+                                self.wfile.write(f'Content-Length: {len(frame_data)}\r\n\r\n'.encode())
+                                self.wfile.write(frame_data)
+                                self.wfile.write(b'\r\n')
+                                self.wfile.flush()
                             last_seq = current_seq
                         except:
                             return
