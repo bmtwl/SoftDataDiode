@@ -6,7 +6,7 @@
 
 A secure, one-way video streaming solution that implements a software-based data diode for transmitting web content and RTSP streams to a cloud server without exposing any return path.
 
-This protects the secure service in two ways: it acts as a data diode, never establishing a 2-way communication link, and it also acts as an opto-isolator, transforming any web content into an image to prevent HTML inspection or other unintentional information leakage.
+This protects the secure service in two ways: it acts as a data diode, never establishing a 2-way communication link, and it also acts as an opto-isolator, transforming all content into a static image to prevent HTML inspection or other unintentional information leakage.
 
 Even if the receiver cloud server is compromised, there should be no way to move laterally back into the sender's network if the receiver software is all that is installed.
 
@@ -103,6 +103,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
   "server": {
     "http_host": "127.0.0.1",
     "http_port": 8000,
+    "html_title": "Data Diode Streams",
     "debug": false
   },
   "streams": {
@@ -112,7 +113,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
       "udp_host": "0.0.0.0",
       "udp_port": 5005,
       "key": "your-generated-key-here",
-      "buffer_size": 50
+      "buffer_size": 5
     },
     "camera1": {
       "name": "Security Camera 1",
@@ -120,7 +121,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
       "udp_host": "0.0.0.0",
       "udp_port": 5006,
       "key": "your-generated-key-here",
-      "buffer_size": 100,
+      "buffer_size": 5,
       "display_resolution": "1280x720"
     },
     "desktop1": {
@@ -129,7 +130,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
       "udp_host": "0.0.0.0",
       "udp_port": 5007,
       "key": "your-generated-key-here",
-      "buffer_size": 100
+      "buffer_size": 5
     }
   }
 }
@@ -168,7 +169,7 @@ _Remove the `basic_auth` (`basicauth` prior to v2.8) section if you want to allo
 
 #### Web Page Capture
 ```bash
-python ddsender.py \
+python sender/ddsender.py \
   --mode web \
   --source "https://webpage.example.com" \
   --cloud-ip YOUR_CLOUD_IP \
@@ -179,7 +180,7 @@ python ddsender.py \
 
 #### RTSP Stream Capture
 ```bash
-python ddsender.py \
+python sender/ddsender.py \
   --mode rtsp \
   --source "rtsp://camera.example.com/stream" \
   --cloud-ip YOUR_CLOUD_IP \
@@ -190,7 +191,7 @@ python ddsender.py \
 
 #### VNC Capture
 ```bash
-python ddsender.py \
+python sender/ddsender.py \
   --mode vnc \
   --source "vnc.example.com" \
   --cloud-ip YOUR_CLOUD_IP \
@@ -204,7 +205,7 @@ python ddsender.py \
 
 ```bash
 # Single receiver usage
-python ddreceiver.py \
+python receiver/ddreceiver.py \
   -udp-host 1.2.3.4 \
   --udp-port 5005 \
   --http-host 127.0.0.1 \
@@ -212,7 +213,7 @@ python ddreceiver.py \
   --key "your-base64-key-here"
 
 # Multi-receiver usage
-python ddmultireceiver.py --config /path/to/config.json
+python multireceiver/ddmultireceiver.py --config /path/to/config.json
 ```
 
 ## Troubleshooting
