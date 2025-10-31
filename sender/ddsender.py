@@ -582,8 +582,9 @@ modes:
         return
 
     # Parse capture resolution
-    capture_resolution = parse_resolution(args.capture_resolution)
-    logger.info(f"Capture resolution set to: {capture_resolution[0]}x{capture_resolution[1]}")
+    if args.mode in ['web', 'rtsp', 'vnc']:
+        capture_resolution = parse_resolution(args.capture_resolution)
+        logger.info(f"Capture resolution set to: {capture_resolution[0]}x{capture_resolution[1]}")
 
     # Validate JPEG encoding quality value
     if args.mode in ['web', 'rtsp', 'vnc'] and not (0 <= args.jpeg_quality <= 100):
