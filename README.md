@@ -12,7 +12,7 @@ Even if the receiver cloud server is compromised, there should be no way to move
 
 The data itself is encrypted with AES-256-GCM prior to being transmitted with a simple pre-shared key.
 
-This system differs from a hardware Data Diode in that all parts of the system are implemented in software in order to achieve the same goal at zero cost. This means that there is no physical "air gap" like a true diode would provide, and the savings come with a need to vet the configuration in order to guarantee correctness. A defence-in-depth approach is discussed below in the "Security Considerations" section.
+This system differs from a hardware Data Diode in that all parts of the system are implemented in software in order to achieve the same goal at zero cost. This means that there is no physical "air gap" like a true diode would provide, and the savings come with a need to vet the configuration in order to guarantee correctness. A defence-in-depth approach is discussed below in the "Security Considerations" and "Hardening" sections.
 
 
 ## Architecture
@@ -66,7 +66,7 @@ graph TD
 
 ## Security Considerations
 
-Due to the way that modern, stateful firewalls work, there is the possibility that an attacker that has taken control of the "Cloud Server" could abuse incoming UDP connections to send traffic back into the secure network. This is further compounded by the fact that the Internet, as it was designed will attempt to route around blocks in order to deliver traffic.
+Due to the way that modern, stateful firewalls work, there is the possibility that an attacker that has taken control of the "Cloud Server" could abuse incoming UDP connections to send traffic back into the secure network. This is further compounded by the fact that the Internet, as it was designed, will attempt to route around blocks in order to deliver traffic.
 
 There are a number of mitigations possible:
 
