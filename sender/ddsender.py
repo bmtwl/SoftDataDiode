@@ -6,6 +6,10 @@ import argparse
 import struct
 import math
 import shutil
+import os
+import hashlib
+import json
+from datetime import datetime, timedelta
 from cryptography.fernet import Fernet
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -217,6 +221,126 @@ def capture_vnc_display(vnc_host, vnc_password=None, vnc_display=0, capture_reso
         logger.error(f"Error capturing VNC display: {e}")
         return None
 
+def calculate_file_checksum(filepath):
+    """Calculate SHA256 checksum of a file"""
+    hash_sha256 = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_sha256.update(chunk)
+    return hash_sha256.hexdigest()
+
+def get_file_info(filepath, base_path, preserve_path):
+    """Get file information for transmission"""
+    stat = os.stat(filepath)
+
+    # Calculate relative path
+    if os.path.isfile(base_path):
+        # Special case: single file sync
+        relative_path = os.path.basename(filepath)
+    else:
+        # Directory sync
+        relative_path = os.path.relpath(filepath, base_path)
+
+    # Handle path preservation
+    if preserve_path:
+        # Send full path from root
+        send_path = filepath[1:] if filepath.startswith('/') else filepath
+    else:
+        # Send relative path (residual structure)
+        send_path = relative_path
+
+    return {
+        'path': send_path,
+        'size': stat.st_size,
+        'mtime': int(stat.st_mtime),
+        'checksum': calculate_file_checksum(filepath)
+    }
+
+def scan_files_for_sync(sync_path, max_file_age_hours, include_dot_files):
+    """Scan files for synchronization based on criteria"""
+    logger = setup_logging(False)
+    files_to_sync = []
+
+    # Check if path starts at root
+    if not sync_path.startswith('/'):
+        logger.error(f"Path must start at root: {sync_path}")
+        return files_to_sync
+
+    # Convert max age to timestamp
+    if max_file_age_hours > 0:
+        cutoff_time = time.time() - (max_file_age_hours * 3600)
+    else:
+        cutoff_time = 0
+
+    if os.path.isfile(sync_path):
+        # Single file case
+        stat = os.stat(sync_path)
+        if max_file_age_hours <= 0 or stat.st_mtime > cutoff_time:
+            if include_dot_files or not os.path.basename(sync_path).startswith('.'):
+                files_to_sync.append(sync_path)
+    elif os.path.isdir(sync_path):
+        # Directory case
+        for root, dirs, files in os.walk(sync_path):
+            # Filter directories (remove dot directories if needed)
+            if not include_dot_files:
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+
+            for file in files:
+                if not include_dot_files and file.startswith('.'):
+                    continue
+
+                filepath = os.path.join(root, file)
+                stat = os.stat(filepath)
+
+                # Check age filter
+                if max_file_age_hours > 0 and stat.st_mtime < cutoff_time:
+                    continue
+
+                files_to_sync.append(filepath)
+    else:
+        logger.error(f"Path does not exist: {sync_path}")
+
+    return files_to_sync
+
+def capture_filesync(sync_path, max_file_age_hours=0, include_dot_files=False, preserve_path=False):
+    """Capture files for synchronization"""
+    logger = setup_logging(False)
+
+    # Validate path starts at root
+    if not sync_path.startswith('/'):
+        logger.error(f"Path must start at root: {sync_path}")
+        return None
+
+    # Determine base path
+    if os.path.isfile(sync_path):
+        base_path = os.path.dirname(sync_path)
+    else:
+        base_path = sync_path
+
+    # Scan for files
+    files = scan_files_for_sync(sync_path, max_file_age_hours, include_dot_files)
+
+    if not files:
+        logger.debug("No files found for sync")
+        return None
+
+    # Create sync data structure
+    sync_data = {
+        'base_path': base_path,
+        'preserve_path': preserve_path,
+        'files': []
+    }
+
+    for filepath in files:
+        try:
+            file_info = get_file_info(filepath, base_path, preserve_path)
+            sync_data['files'].append(file_info)
+            logger.debug(f"Added file for sync: {file_info['path']} ({file_info['size']} bytes)")
+        except Exception as e:
+            logger.error(f"Error processing file {filepath}: {e}")
+
+    return sync_data
+
 def send_frame_fragmented(frame, cipher, sock, cloud_ip, cloud_port, sequence_number, max_packet_size=1400, jpeg_quality=60):
     """Encrypt and send frame via UDP with fragmentation"""
     logger = setup_logging(False)  # Create logger for this function
@@ -232,7 +356,7 @@ def send_frame_fragmented(frame, cipher, sock, cloud_ip, cloud_port, sequence_nu
         data = buffer.tobytes()
 
         # Calculate safe payload size accounting for encryption overhead
-        header_size = 8  # 4 bytes seq + 2 bytes frag_index + 2 bytes total_frags
+        header_size = 16  # 8 bytes seq + 4 bytes frag_index + 4 bytes total_frags
         fernet_overhead = 450  # Approximate Fernet overhead
         safe_payload_size = max_packet_size - header_size - fernet_overhead
 
@@ -251,8 +375,8 @@ def send_frame_fragmented(frame, cipher, sock, cloud_ip, cloud_port, sequence_nu
             end_pos = min((frag_index + 1) * safe_payload_size, len(data))
             fragment_data = data[start_pos:end_pos]
 
-            # Create header: sequence_number(4) + frag_index(2) + total_frags(2)
-            header = struct.pack('>IHH', sequence_number, frag_index, total_frags)
+            # Create header: sequence_number(8) + frag_index(4) + total_frags(4)
+            header = struct.pack('>QII', sequence_number, frag_index, total_frags)
             packet_data = header + fragment_data
 
             # Encrypt packet
@@ -273,23 +397,177 @@ def send_frame_fragmented(frame, cipher, sock, cloud_ip, cloud_port, sequence_nu
     except Exception as e:
         logger.error(f"Error processing frame {sequence_number}: {e}")
 
+def send_filesync_fragmented(sync_data, cipher, sock, cloud_ip, cloud_port, sequence_number, max_packet_size=1400):
+    """Encrypt and send filesync data via UDP with fragmentation"""
+    logger = setup_logging(False)
+
+    if sync_data is None:
+        logger.debug("Skipping null sync data")
+        return
+
+    try:
+        # Convert sync data to JSON and encode
+        json_data = json.dumps(sync_data, separators=(',', ':'))
+        data = json_data.encode('utf-8')
+
+        # Add packet type identifier
+        packet_type = b'FILESYNC_METADATA'
+        data = packet_type + data
+
+        # Calculate safe payload size accounting for encryption overhead
+        header_size = 16  # 8 bytes seq + 4 bytes frag_index + 4 bytes total_frags
+        fernet_overhead = 450  # Approximate Fernet overhead
+        safe_payload_size = max_packet_size - header_size - fernet_overhead
+
+        if safe_payload_size <= 0:
+            logger.error(f"Packet size too small: max={max_packet_size}, header={header_size}, overhead={fernet_overhead}")
+            return
+
+        total_frags = math.ceil(len(data) / safe_payload_size)
+
+        logger.debug(f"Filesync {sequence_number}: {len(data)} bytes total, {total_frags} fragments needed")
+
+        # Fragment and send data
+        fragments_sent = 0
+        for frag_index in range(total_frags):
+            start_pos = frag_index * safe_payload_size
+            end_pos = min((frag_index + 1) * safe_payload_size, len(data))
+            fragment_data = data[start_pos:end_pos]
+
+            # Create header: sequence_number(8) + frag_index(4) + total_frags(4)
+            header = struct.pack('>QII', sequence_number, frag_index, total_frags)
+            packet_data = header + fragment_data
+
+            # Encrypt packet
+            encrypted_packet = cipher.encrypt(packet_data)
+
+            # Send via UDP
+            try:
+                sock.sendto(encrypted_packet, (cloud_ip, cloud_port))
+                fragments_sent += 1
+                if logger.isEnabledFor(10):  # DEBUG level
+                    logger.debug(f"Sent fragment {frag_index+1}/{total_frags} for filesync {sequence_number}, size: {len(encrypted_packet)} bytes")
+            except Exception as e:
+                logger.error(f"Failed to send fragment {frag_index} for filesync {sequence_number}: {e}")
+                break
+
+        logger.debug(f"Filesync {sequence_number}: Sent {fragments_sent}/{total_frags} fragments, total size: {len(data)} bytes")
+
+    except Exception as e:
+        logger.error(f"Error processing filesync {sequence_number}: {e}")
+
+def send_file_content_fragmented(filepath, file_info, cipher, sock, cloud_ip, cloud_port, sequence_number, max_packet_size=1400):
+    """Send individual file content via UDP with fragmentation"""
+    logger = setup_logging(False)
+
+    try:
+        # Read file content
+        with open(filepath, 'rb') as f:
+            file_data = f.read()
+
+        # Add packet type identifier and file info
+        packet_type = b'FILE_CONTENT'
+        file_info_json = json.dumps(file_info, separators=(',', ':'))
+        header_data = packet_type + file_info_json.encode('utf-8') + b'\x00'  # Null terminator
+        data = header_data + file_data
+
+        # Calculate safe payload size accounting for encryption overhead
+        header_size = 16  # 8 bytes seq + 4 bytes frag_index + 4 bytes total_frags
+        fernet_overhead = 450  # Approximate Fernet overhead
+        safe_payload_size = max_packet_size - header_size - fernet_overhead
+
+        if safe_payload_size <= 0:
+            logger.error(f"Packet size too small: max={max_packet_size}, header={header_size}, overhead={fernet_overhead}")
+            return
+
+        total_frags = math.ceil(len(data) / safe_payload_size)
+
+        logger.debug(f"File {sequence_number}: {file_info['path']} ({len(data)} bytes total, {total_frags} fragments needed)")
+
+        # Fragment and send data
+        fragments_sent = 0
+        for frag_index in range(total_frags):
+            start_pos = frag_index * safe_payload_size
+            end_pos = min((frag_index + 1) * safe_payload_size, len(data))
+            fragment_data = data[start_pos:end_pos]
+
+            # Create header: sequence_number(8) + frag_index(4) + total_frags(4)
+            header = struct.pack('>QII', sequence_number, frag_index, total_frags)
+            packet_data = header + fragment_data
+
+            # Encrypt packet
+            encrypted_packet = cipher.encrypt(packet_data)
+
+            # Send via UDP
+            try:
+                sock.sendto(encrypted_packet, (cloud_ip, cloud_port))
+                fragments_sent += 1
+                if logger.isEnabledFor(10):  # DEBUG level
+                    logger.debug(f"Sent fragment {frag_index+1}/{total_frags} for file {sequence_number}, size: {len(encrypted_packet)} bytes")
+            except Exception as e:
+                logger.error(f"Failed to send fragment {frag_index} for file {sequence_number}: {e}")
+                break
+
+        logger.debug(f"File {sequence_number}: Sent {fragments_sent}/{total_frags} fragments, total size: {len(data)} bytes")
+
+    except Exception as e:
+        logger.error(f"Error processing file {sequence_number} ({filepath}): {e}")
+
 def main():
-    parser = argparse.ArgumentParser(description='Data Diode Sender')
-    parser.add_argument('--mode', choices=['web', 'rtsp', 'vnc'], required=True, help='Capture mode')
-    parser.add_argument('--source', required=True, help='URL for web, RTSP stream URL, or VNC host')
-    parser.add_argument('--cloud-ip', required=True, help='Cloud server IP')
-    parser.add_argument('--cloud-port', type=int, required=True, help='Cloud server UDP port')
-    parser.add_argument('--key', required=True, help='Base64 encoded encryption key')
-    parser.add_argument('--interval', type=float, default=0.1, help='Capture interval in seconds')
-    parser.add_argument('--username', help='Username for authentication')
-    parser.add_argument('--password', help='Password for authentication. Password file path for vnc')
-    parser.add_argument('--timeout', type=int, default=30, help='Timeout for web page loading (seconds)')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
-    parser.add_argument('--max-packet-size', type=int, default=1400, help='Maximum UDP packet size (default: 1400)')
-    parser.add_argument('--capture-resolution', default='1280x720', help='Capture resolution (default: 1280x720)')
-    parser.add_argument('--web-capture-element', default='body', help='CSS selector for web capture element (default: body)')
-    parser.add_argument('--jpeg-quality', type=int, default=60, help='The quality of the JPEG encoder (default: 60)')
-    parser.add_argument('--vnc-display', type=int, default=0, help='The VNC Display Number (default: 1)')
+    parser = argparse.ArgumentParser(
+        description='Data Diode Sender',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""description:
+Data diode sender for one-way transmission of data streams and files.
+
+modes:
+  web     - Capture webpage screenshots
+  rtsp    - Capture RTSP video streams
+  vnc     - Capture VNC desktop displays
+  filesync - Synchronize directory contents
+"""
+    )
+
+    # Global options
+    global_group = parser.add_argument_group('global options')
+    global_group.add_argument('--mode', choices=['web', 'rtsp', 'vnc', 'filesync'], required=True, help='Capture mode')
+    global_group.add_argument('--cloud-ip', required=True, help='Cloud server IP')
+    global_group.add_argument('--cloud-port', type=int, required=True, help='Cloud server UDP port')
+    global_group.add_argument('--key', required=True, help='Base64 encoded encryption key')
+    global_group.add_argument('--debug', action='store_true', help='Enable debug logging')
+    global_group.add_argument('--max-packet-size', type=int, default=1400, help='Maximum UDP packet size (default: 1400)')
+
+    # Web mode options
+    web_group = parser.add_argument_group('web mode options')
+    web_group.add_argument('--source', help='URL for web capture')
+    web_group.add_argument('--username', help='Username for authentication')
+    web_group.add_argument('--password', help='Password for authentication')
+    web_group.add_argument('--timeout', type=int, default=30, help='Timeout for web page loading (seconds)')
+    web_group.add_argument('--web-capture-element', default='body', help='CSS selector for web capture element (default: body)')
+
+    # RTSP mode options
+    rtsp_group = parser.add_argument_group('rtsp mode options')
+    rtsp_group.add_argument('--rtsp-url', help='RTSP stream URL')
+
+    # VNC mode options
+    vnc_group = parser.add_argument_group('vnc mode options')
+    vnc_group.add_argument('--vnc-host', help='VNC host')
+    vnc_group.add_argument('--vnc-password', help='Password for VNC authentication')
+    vnc_group.add_argument('--vnc-display', type=int, default=0, help='The VNC Display Number (default: 0)')
+
+    # Filesync mode options
+    filesync_group = parser.add_argument_group('filesync mode options')
+    filesync_group.add_argument('--sync-path', help='Directory or file path to sync')
+    filesync_group.add_argument('--preserve-path', action='store_true', help='Preserve full directory structure')
+    filesync_group.add_argument('--include-dot-files', action='store_true', help='Include hidden dot files')
+    filesync_group.add_argument('--max-file-age', type=float, default=0, help='Maximum file age in hours (0 = no limit)')
+    filesync_group.add_argument('--sync-interval', type=float, default=60, help='Sync interval in seconds (default: 60)')
+
+    # Common capture options
+    capture_group = parser.add_argument_group('capture options')
+    capture_group.add_argument('--capture-resolution', default='1280x720', help='Capture resolution (default: 1280x720)')
+    capture_group.add_argument('--jpeg-quality', type=int, default=60, help='JPEG encoding quality 0-100 (default: 60)')
+    capture_group.add_argument('--interval', type=float, default=0.1, help='Capture interval in seconds (web/rtsp/vnc)')
 
     args = parser.parse_args()
 
@@ -308,53 +586,150 @@ def main():
     logger.info(f"Capture resolution set to: {capture_resolution[0]}x{capture_resolution[1]}")
 
     # Validate JPEG encoding quality value
-    if not (0 <= args.jpeg_quality <= 100):
-        raise argparse.ArgumentTypeError(f"Quality must be between 0 and 100, inclusive.")
+    if args.mode in ['web', 'rtsp', 'vnc'] and not (0 <= args.jpeg_quality <= 100):
+        logger.error(f"Quality must be between 0 and 100, inclusive.")
+        return
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     logger.debug(f"UDP socket created for {args.cloud_ip}:{args.cloud_port}")
 
-    if args.mode == 'web':
-        driver = create_webdriver()
-        capture_func = lambda: capture_webpage(
-            args.source, driver, args.username, args.password, args.timeout,
-            args.web_capture_element, capture_resolution
-        )
-        logger.info(f"Web capture initialized for {args.source}")
-        logger.info(f"Capturing element: {args.web_capture_element}")
-    elif args.mode == 'rtsp':
-        capture_func = lambda: capture_rtsp_stream(
-            args.source, args.username, args.password, capture_resolution
-        )
-        logger.info(f"RTSP capture initialized for {args.source}")
-    else:  # vnc
-        if shutil.which('vncsnapshot'):
-            logger.debug(f"VNC Capture tool found") 
-        else:
-            logger.info(f"VNC Capture Tool vncsnapshot not found in path. Aborting!")
-            return
-        capture_func = lambda: capture_vnc_display(
-            args.source, args.password, args.vnc_display, capture_resolution
-        )
-        logger.info(f"VNC capture initialized for {args.source}")
-
     sequence_number = 0
 
     try:
-        while True:
-            frame = capture_func()
-            if frame is not None:
-                logger.debug(f"Captured frame {sequence_number} with shape {frame.shape}")
-            send_frame_fragmented(
-                frame, cipher, sock, args.cloud_ip, args.cloud_port,
-                sequence_number, args.max_packet_size, args.jpeg_quality
+        if args.mode == 'web':
+            if not args.source:
+                logger.error("Web mode requires --source URL")
+                return
+            driver = create_webdriver()
+            capture_func = lambda: capture_webpage(
+                args.source, driver, args.username, args.password, args.timeout,
+                args.web_capture_element, capture_resolution
             )
-            sequence_number += 1
-            time.sleep(args.interval)
+            logger.info(f"Web capture initialized for {args.source}")
+            logger.info(f"Capturing element: {args.web_capture_element}")
+
+            while True:
+                frame = capture_func()
+                if frame is not None:
+                    logger.debug(f"Captured frame {sequence_number} with shape {frame.shape}")
+                send_frame_fragmented(
+                    frame, cipher, sock, args.cloud_ip, args.cloud_port,
+                    sequence_number, args.max_packet_size, args.jpeg_quality
+                )
+                sequence_number += 1
+                time.sleep(args.interval)
+
+        elif args.mode == 'rtsp':
+            if not args.rtsp_url:
+                logger.error("RTSP mode requires --rtsp-url")
+                return
+            capture_func = lambda: capture_rtsp_stream(
+                args.rtsp_url, args.username, args.password, capture_resolution
+            )
+            logger.info(f"RTSP capture initialized for {args.rtsp_url}")
+
+            while True:
+                frame = capture_func()
+                if frame is not None:
+                    logger.debug(f"Captured frame {sequence_number} with shape {frame.shape}")
+                send_frame_fragmented(
+                    frame, cipher, sock, args.cloud_ip, args.cloud_port,
+                    sequence_number, args.max_packet_size, args.jpeg_quality
+                )
+                sequence_number += 1
+                time.sleep(args.interval)
+
+        elif args.mode == 'vnc':
+            if not args.vnc_host:
+                logger.error("VNC mode requires --vnc-host")
+                return
+            if shutil.which('vncsnapshot'):
+                logger.debug(f"VNC Capture tool found") 
+            else:
+                logger.info(f"VNC Capture Tool vncsnapshot not found in path. Aborting!")
+                return
+            capture_func = lambda: capture_vnc_display(
+                args.vnc_host, args.vnc_password, args.vnc_display, capture_resolution
+            )
+            logger.info(f"VNC capture initialized for {args.vnc_host}")
+
+            while True:
+                frame = capture_func()
+                if frame is not None:
+                    logger.debug(f"Captured frame {sequence_number} with shape {frame.shape}")
+                send_frame_fragmented(
+                    frame, cipher, sock, args.cloud_ip, args.cloud_port,
+                    sequence_number, args.max_packet_size, args.jpeg_quality
+                )
+                sequence_number += 1
+                time.sleep(args.interval)
+
+        elif args.mode == 'filesync':
+            if not args.sync_path:
+                logger.error("Filesync mode requires --sync-path")
+                return
+
+            # Validate path starts at root
+            if not args.sync_path.startswith('/'):
+                logger.error(f"Sync path must start at root: {args.sync_path}")
+                return
+
+            logger.info(f"Filesync initialized for {args.sync_path}")
+            logger.info(f"Preserve path: {args.preserve_path}")
+            logger.info(f"Include dot files: {args.include_dot_files}")
+            logger.info(f"Max file age: {args.max_file_age} hours")
+
+            while True:
+                # Capture sync metadata
+                sync_data = capture_filesync(
+                    args.sync_path, 
+                    args.max_file_age, 
+                    args.include_dot_files, 
+                    args.preserve_path
+                )
+
+                if sync_data is not None:
+                    logger.debug(f"Captured sync data with {len(sync_data['files'])} files")
+
+                    # Send sync metadata
+                    send_filesync_fragmented(
+                        sync_data, cipher, sock, args.cloud_ip, args.cloud_port,
+                        sequence_number, args.max_packet_size
+                    )
+                    sequence_number += 1
+
+                    # Send individual file contents
+                    base_path = sync_data['base_path']
+                    for file_info in sync_data['files']:
+                        # Reconstruct full file path
+                        if os.path.isfile(args.sync_path):
+                            filepath = args.sync_path
+                        else:
+                            # For directory sync, reconstruct path
+                            if args.preserve_path:
+                                # Path is from root
+                                filepath = '/' + file_info['path']
+                            else:
+                                # Path is relative to base
+                                filepath = os.path.join(base_path, file_info['path'])
+
+                        if os.path.exists(filepath):
+                            send_file_content_fragmented(
+                                filepath, file_info, cipher, sock, args.cloud_ip, args.cloud_port,
+                                sequence_number, args.max_packet_size
+                            )
+                            sequence_number += 1
+                        else:
+                            logger.warning(f"File not found, skipping: {filepath}")
+
+                time.sleep(args.sync_interval)
+
     except KeyboardInterrupt:
         logger.info("Stopping sender...")
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
     finally:
         if args.mode == 'web':
             driver.quit()
