@@ -2,11 +2,11 @@
 <img src="https://github.com/user-attachments/assets/5cb569c6-34cc-4ee4-b7a4-c961714234ce" width="500">
 </p>
 
-## Soft Data Diode Image Streaming System 
+## Soft Data Diode Streaming System 
 
-A secure, one-way video streaming solution that implements a software-based data diode for transmitting web content and RTSP streams to a cloud server without exposing any return path.
+A secure, one-way data streaming solution that implements a software-based data diode for transmitting web content, RTSP streams, vnc sessions and files to a cloud server without exposing any return path.
 
-This protects the secure service in two ways: it acts as a data diode, never establishing a 2-way communication link, and it also acts as an opto-isolator, transforming all content into a static image to prevent HTML inspection or other unintentional information leakage.
+This protects the secure service in two ways: it acts as a data diode, never establishing a 2-way communication link, and for web and vnc it also acts as an opto-isolator, transforming that content into a static image to prevent interaction, HTML inspection or other unintentional information leakage.
 
 Even if the receiver cloud server is compromised, there should be no way to move laterally back into the sender's network if the receiver software is all that is installed.
 
@@ -17,7 +17,7 @@ The data itself is encrypted with AES-256-GCM prior to being transmitted with a 
 ```mermaid
 graph TD
     subgraph "Secure Environment"
-        SOURCE[Source System<BR>Web, RTSP or VNC] --> SENDER[Data Diode Sender]
+        SOURCE[Source System<BR>Web, RTSP, VNC or Files] --> SENDER[Data Diode Sender]
         SENDER --> SENDERPROCESSING[UDP Packets<br/>Encrypted & Fragmented]
     end
     
@@ -26,12 +26,14 @@ graph TD
     subgraph "Cloud Environment"
         CLOUDIP --> RECEIVER[Data Diode Receiver]
         RECEIVER --> RECEIVERPROCESSING[Frame Reassembly<br/>& Decryption]
-        RECEIVERPROCESSING --> BUFFER[Frame Buffer]
-        BUFFER --> HTTPSERVER[HTTP Stream Server]
+        RECEIVERPROCESSING -->|Files and Images| BUFFER[Data Buffer]
+        BUFFER -->|Images| HTTPSERVER[HTTP Stream Server]
+        BUFFER -->|Files| FILESYSTEM[Remote Filesystem]
     end
 
     subgraph "Internet"
-        HTTPSERVER --> INTERNETCLIENT[Web Browser/Client]
+        HTTPSERVER <--> WEBBROWSER[Web Browser]
+        FILESYSTEM <--> FILECLIENT[SFTP Client]
     end
 
     
@@ -41,8 +43,8 @@ graph TD
     classDef client fill:#fff3e0,stroke:#e65100;
     
     class SOURCE,SENDER,SENDERPROCESSING secure
-    class CLOUDIP,RECEIVER,RECEIVERPROCESSING,BUFFER,HTTPSERVER cloud
-    class INTERNETCLIENT client
+    class CLOUDIP,RECEIVER,RECEIVERPROCESSING,BUFFER,HTTPSERVER,FILESYSTEM cloud
+    class WEBBROWSER,FILECLIENT client
 ```
 
 ## Features
@@ -51,8 +53,9 @@ graph TD
 - **Opto-Isolation**: Resource is encoded as a simple image to prevent information leakage
 - **Multiple Stream Support**: Multi-receiver version handles multiple independent streams
 - **Secure Encryption**: AES-256-GCM encryption with pre-shared keys
-- **Web, RTSP and VNC Sources**: Capture web pages (with Selenium), RTSP video streams or VNC clients (with vncsnapshot)
-- **Freshness Monitoring**: Streams visually and programatically show whether updates are:
+- **Web, RTSP and VNC Image Sources**: Capture web pages (with Selenium), RTSP video streams or VNC clients (with vncsnapshot)
+- **Filesystem Replication**: Best-effort file replication with automatic sliding window to allow opportunities for successful transfer
+- **Image Freshness Monitoring**: Image streams visually and programatically show whether updates are:
     - Live - Green dot (Updated within the last 30 seconds)
     - Stalled - Yellow dot and time since last frame (Last update was more than 30 seconds ago)
     - Stale - Red dot (Not updated in more than 5 minutes)
@@ -201,6 +204,18 @@ python sender/ddsender.py \
   --interval 10
 ```
 
+### File Sync
+```bash
+python sender/ddsender.py \
+  --mode filesync \
+  --sync-path /home/user/documents \
+  --cloud-ip YOUR_CLOUD_IP \
+  --cloud-port 5010 \
+  --key "your-base64-key-here" \
+  --sync-interval 60 \
+  --max-file-age 1 
+```
+
 ### Running the Receiver
 
 ```bash
@@ -214,6 +229,15 @@ python receiver/ddreceiver.py \
 
 # Multi-receiver usage
 python multireceiver/ddmultireceiver.py --config /path/to/config.json
+
+# Filesync receiver usage
+python filereceiver/ddfilereceiver.py \
+    --udp-host 1.2.3.4 \
+    --udp-port 5010 \
+    --http-host 127.0.0.1 \
+    --http-port 8080 \
+    --key "your-base64-key-here" \
+    --output-dir /path/to/filesync 
 ```
 
 ## Troubleshooting
@@ -232,6 +256,12 @@ There are a few strategies to reduce resource usage:
 Check for the presence of UDP packets using something like Wireshark or `tcpdump udp and port 5005`. You should see a constant stream from the sender to the receiver on both hosts.
 Any firewalls in the path between the sender and receiver are highly likely to block this traffic, so make sure they are set up with appropriate allow rules.
 
+### Not all my files are coming through during file sync
+Dotfiles are skipped by default, but can be turned on with a flag on the sender.
+There is no guarantee that any given file will get through during a round of syncing, or that the receiver is even listening!
+The best bet is to increase your `--max-file-age` and shorten your `--sync-interval` until you are getting the level of synchronization success that you need.
+You may also want to schedule a regular run with `--max-file-age 0` in order to try to get any straggler files that didn't make it over in any other sync.
+
 ### Things aren't working and I'm not sure what's happening
 You can start the sender or receiver with the `--debug` flag, or turn on debugging in the `config.json` file. This should make the output very verbose.
 If this still doesn't help, please create an issue in the repo.
@@ -241,3 +271,7 @@ If this still doesn't help, please create an issue in the repo.
 ### My logs have lots of `I/O operation on closed file` events in them
 This is due to the way the Python http server flushes out connections and there is no simple workaround.
 I may do some custom exception handling in the future to clean these up, but for now they can be safely ignored.
+
+### Very large files don't come through consistently
+If you are trying to transfer very large files, a single packet being lost or corrupted during transmission will cause the receiver to throw the whole thing away.
+You can increase the number of attempts to have a better chance of success, or increase the MTU and `--max-packet-size` to help make things better, but the short answer is that this is an inherently unreliable method of transfer, and large files are a worst case.
