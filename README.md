@@ -322,7 +322,7 @@ The `ddreflect.py` is the simplest test. Before you have any mititgations in pla
 As you implement mitigations, verify that you can see return traffic, and then put one mitigation in place. Verify that it blocks the return path before removing it and starting the process again for the next mitigation.
 Once you have verified each mitigations in isolation, you should implement all mitigations for defence in depth against backpropagation of traffic from the receiver to the sender.
 
-The `ddmultireflect.py` allows you to also specify the return UDP port, and can test for the precense of more sophisticated scenarios where an attacker is able to redirect to another port to attempt to exploit other services on the sender than just ones that live on the sending port.
+The `ddredirect.py` allows you to also specify the return UDP port, and can test for the precense of more sophisticated scenarios where an attacker is able to redirect to another port to attempt to exploit other services on the sender than just ones that live on the sending port.
 
 ## Troubleshooting
 
