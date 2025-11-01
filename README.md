@@ -358,4 +358,4 @@ I may do some custom exception handling in the future to clean these up, but for
 
 ### Very large files don't come through consistently
 If you are trying to transfer very large files, a single packet being lost or corrupted during transmission will cause the receiver to throw the whole thing away.
-You can increase the number of attempts to have a better chance of success, or increase the MTU and `--max-packet-size` to help make things better, but the short answer is that this is an inherently unreliable method of transfer, and large files are a worst case.
+You can increase the number of attempts to have a better chance of success, or increase the Network MTU (ie. Jumbo Packets) and `--max-packet-size` to help make things better, but the short answer is that this is an inherently unreliable method of transfer, and large files are a worst case.
