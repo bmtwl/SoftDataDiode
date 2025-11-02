@@ -5,11 +5,11 @@
 
 ## Soft Data Diode Streaming System 
 
-A secure, one-way data streaming solution that implements a software-based data diode for transmitting web content, RTSP streams, vnc sessions and files to a cloud server without exposing any return path.
+A secure, one-way data streaming solution that implements a software-based data diode for transmitting web content, RTSP streams, vnc sessions and files from a secure network zone to another network (eg. the cloud) without exposing any return path.
 
 This protects the secure service in two ways: it acts as a data diode, never establishing a 2-way communication link, and for web and vnc it also acts as an opto-isolator, transforming that content into a static image to prevent interaction, HTML inspection or other unintentional information leakage or external control.
 
-Even if the receiver cloud server is compromised, there should be no way to move laterally back into the sender's network if the receiver software is all that is installed and appropriate mitigations are in line in the secure network.
+Even if the receiver server is compromised, there should be no way to move laterally back into the sender's network if appropriate mitigations have been implemented as-per instructions.
 
 The data itself is encrypted with AES-256-GCM prior to being transmitted with a simple pre-shared key.
 
