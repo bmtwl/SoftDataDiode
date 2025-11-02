@@ -13,8 +13,11 @@ Even if the receiver cloud server is compromised, there should be no way to move
 The data itself is encrypted with AES-256-GCM prior to being transmitted with a simple pre-shared key.
 
 >[!IMPORTANT]
->This system differs from a pure hardware Data Diode in that all parts of the system are implemented in software in order to achieve the same goal at zero cost. This means that there is no physical "air gap" like a true unidirectional diode/opto-isolator would provide. Hardware Data Diodes are expensive for a reason! The tradeoff is that the savings come with a need to vet the configuration in order to guarantee correctness. A defence-in-depth approach is discussed below in the "Security Considerations" and "Hardening" sections.
-
+>This system differs from a pure hardware Data Diode in that all parts of the system are implemented in software in order to achieve the same goal at zero cost. This means that there is no physical "air gap" like a true unidirectional diode/opto-isolator would provide. Hardware Data Diodes are expensive for a reason! The tradeoff is that the savings come with a need to vet the configuration in order to guarantee correctness. A defence-in-depth approach is discussed below in the [Security Considerations](#security-considerations) and [Hardening](#hardening) sections.
+>The security model relies on:
+>- Application-level unidirectionality (sender never binds to listening ports)
+>- Network-level blocking (firewall rules and ACLs prevent return traffic)
+>- Infrastructure-level detection (logging and alerting on suspicious attempts)
 
 ## Architecture
 
@@ -53,7 +56,7 @@ graph TD
 
 ## Features
 
-- **True One-Way Communication**: No return path possible given correct implementation (software data diode)
+- **Application-Level One-Way Communication**: Sender never binds to listening ports. No return path possible given correct implementation
 - **Opto-Isolation**: Resource is encoded as a simple image to prevent information leakage
 - **Multiple Stream Support**: Multi-receiver version handles multiple independent streams
 - **Secure Encryption**: AES-256-GCM encryption with pre-shared keys
@@ -64,30 +67,6 @@ graph TD
     - Stalled - Yellow dot and time since last frame (Last update was more than 30 seconds ago)
     - Stale - Red dot (Not updated in more than 5 minutes)
     - Freshness JSON endpoint per stream with the state and seconds since last frame (`https://host/stream/freshness`)
-
-## Security Considerations
-
-Due to the way that modern, stateful firewalls work, there is the possibility that an attacker that has taken control of the "Cloud Server" could abuse incoming UDP connections to send traffic back into the secure network. This is further compounded by the fact that the Internet, as it was designed, will attempt to route around blocks in order to deliver traffic.
-
->[!NOTE]
->This system is designed to be reasonably secure by default, but you should know your risk profile and manage it appropriately. This can be a major rabbit hole if you decide to be "as secure as possible".
-
-There are a number of mitigations possible:
-
-   - Firewall rules attempting to prevent return traffic will generally not work. The packet will be part of an established flow and hit the fast-path before any rules are evaluated. YMMV with your specific firewall platform, and software firewalls may be more ammenable to setting up rules to block right at the front door to your network (see below).
-   - Firewalls that support SNAT may be configured with a return address to something like 192.0.2.x (often used as a blackhole address)
-   - Switch ACLs at a choke point that prevent return UDP traffic
-   - OS level firewalls can be used to attempt to block specific types of traffic. Linux iptables is flexible enough to do exactly what we want (statefully deny return traffic)
-
-These mitigations can generally "stack", allowing a defence in depth approach that approaches a guarantee of security.
-
-All this said, if you are behind a NATting firewall then it is highly unlikely that the receiver would be practically able to send a packet back on a different port. The firewall would have chosen a random port to forward the traffic from, and if the receiver doesn't send the return packets to the same port, then it would be dropped. If the receiver _does_ send packets back to that same randomized port, then it is mapped back to the original port, where there is nothing listening if you are smart.
-
-If you are behind a firewall and no form of NAT (ie. sender and receiver can route to each other with no address translation), then suddenly an attacker can choose arbitrary ports, and your job gets somewhat harder. This is also true of some kinds of NAT that map a host in a more sophisticated way, like symmetrical NAT or various cone NATs. STUN/TURN/ICE/NAT-PMP/PCP/UPnP or other dynamic NAT translation helper protocols or programs being in play may also make the situation more complex and require careful consideration. If the host is specified as the "DMZ" host, then it probably has no protection and should be treated as fully exposed.
-
-If there can be no hardware firewall in place at all or it is running in Layer 2 "bump-in-wire" mode, you can either try to use the `iptables` rule in the mitigations section to block at the OS level or risk-manage. Really, at that point you will not be able to build a data-diode in any real sense and have probably chosen the wrong tool.
-
-Known mitigation techniques are documented in the "Hardening" section below. Scripts are included in the repository to test for potential misconfiguration.
 
 ## Installation
 
@@ -268,6 +247,39 @@ python filereceiver/ddfilereceiver.py \
     --key "your-base64-key-here" \
     --output-dir /path/to/filesync 
 ```
+### Running as an OS Service
+This will be highly specific to your Operating System.
+
+There is an example of a systemd service definition in the hardening folder in this repo. You should adapt it to your needs, especially the read-write paths and resource limits section. e.g. the example file has cpu usage capped at 5%, which is in the sustainable limits of most VPS services, but which may not be enough for full production.
+
+## Security Considerations
+
+Due to the way that modern, stateful firewalls work, there is the possibility that an attacker that has taken control of the "Cloud Server" could abuse incoming UDP connections to send traffic back into the secure network. This is further compounded by the fact that the Internet, as it was designed, will attempt to route around blocks in order to deliver traffic.
+
+>[!NOTE]
+>This system is designed to be reasonably secure by default, but you should know your risk profile and manage it appropriately. This can be a major rabbit hole if you decide to be "as secure as possible".
+
+There are a number of mitigations possible:
+
+   - Firewalls that support SNAT may be configured with a return address of something like 192.0.2.x (often used as a blackhole address) or an unused internal address as a canary
+   - Switch ACLs to prevent these specific return UDP traffic flows may be created at a choke point
+   - OS level firewalls may be used to attempt to block specific types of traffic. Linux iptables is flexible enough to do exactly what we want (statefully deny return traffic)
+
+These mitigations can generally "stack", allowing a defence in depth approach that approaches a guarantee of security.
+
+>[!INFO]
+>You might think that block rules on your hardware firewall set to prevent return traffic would be a possible mitigation, but contrary to intuition these will generally not work. The packet will be part of an established flow and hit the fast-path before any rules are evaluated. YMMV with your specific firewall platform, but be prepared for disappointment.
+
+All this said, if the sender is behind a NATting firewall then it is highly unlikely that the receiver would be practically able to send a packet back on a different port. The firewall would have chosen a random port to forward the traffic from, and if the receiver doesn't send the return packets to the same port, then it would be dropped. If the receiver _does_ send packets back to that same randomized port, then it is mapped back to the original port, where there is nothing listening if implemented as per this guide.
+
+If the sender and receiver have a firewall between them but no form of NAT (ie. sender and receiver can route to each other with no address translation), then suddenly an attacker can choose arbitrary ports, and your job gets somewhat harder. This is also true of some kinds of NAT that map a host in a more sophisticated way, like symmetrical NAT or various cone NATs. STUN/TURN/ICE/NAT-PMP/PCP/UPnP or other dynamic NAT translation helper protocols or programs being in play may also make the situation more complex and require careful consideration. If the host is specified as the "DMZ" host, then it probably has only light protection and should be treated as fully exposed.
+
+If there can be no hardware firewall in place at all or it is running in Layer 2 "bump-in-wire" mode, you can either try to use the `iptables` rule in the mitigations section to block at the OS level or risk-manage. Really, at that point you will not be able to build a data-diode in any real sense and have probably chosen the wrong tool.
+
+Known mitigation techniques are documented in the "Hardening" section below. Scripts are included in the repository to test for potential misconfiguration.
+
+>[!NOTE]
+>Any return traffic attempting to reach the sender from the receiver is **provably malicious** and will be blocked by network controls. This creates clear security events that can be monitored and investigated.
 
 ## Hardening
 Since this process relies on the behaviour of many systems between the sender and receiver, it is recommended that the path be hardened at as many points as possible. 
@@ -277,20 +289,22 @@ The below list includes both general techniques and ideas, but also specific imp
 >The information in this section is mostly limited to procedures specific to this software. For general hardening best-practices like automatic updates, zero trust style least privlege, etc, see vendor documentation
 
 ### Hardware Firewall
-#### Source/destination/protocol/port rules
-Modern firewalls are stateful, and are architected in a way that will actively fight with attempts to block established sessions using traditional firewall rules. 
-You may have more luck, but its safe to assume most will be impossible to harden in this way.
 #### Source-NAT rules
 SNAT is a common firewall feature that lets you control the return path of packets for a number of well-known scenarios, but we can exploit it for our uncommon purposes. 
-Basically the sender's packets leaves the firewall with a dummy source IP, which is the IP that the cloud server will try to respond to. 
-As long as this can be configured to a non-functional or blackhole style address (192.0.2.0/24 is traditional), then the return path will be fundamentally broken outside the network's perimiter.
+Basically the sender's packets leave the firewall with a dummy source IP, which is the IP that a compromised cloud server would try to respond to. 
+As long as this can be configured to a non-functional or blackhole style address (192.0.2.0/24 is traditional), then the return path will be fundamentally broken outside the network's perimiter. Substitute in a valid-but-unused address, and you have created a tripwire you can monitor and alert on.
 #### Next-Gen Firewall protocol inspection
 If all else fails, your NGFW will hopefully notice that the return packets are malformed and will log, block and drop malicious packets. Best not to rely on this, as attackers could be using valid protocol streams.
 Still, any extra protection that you can turn on in your firewall will make it that much harder to exploit.
+#### Source/destination/protocol/port rules
+This is usually a dead end. Modern firewalls are stateful, and are architected in a way that will actively fight with attempts to block established sessions using traditional firewall rules. 
+Its safe to assume most will be impossible to harden in this way.
 
 ### Network Switches
 #### Access Control Lists
 Switch ACLs that operate at Layer 3 should be able to block arbitrary traffic, with no relation to established sessions or flows.
+
+Reference your switch vendors documentation for specific configuration procedures.
 
 ### Software, OS or XDR agent Firewalls
 #### Linux 
@@ -323,6 +337,14 @@ As you implement mitigations, verify that you can see return traffic, and then p
 Once you have verified each mitigations in isolation, you should implement all mitigations for defence in depth against backpropagation of traffic from the receiver to the sender.
 
 The `ddredirect.py` allows you to also specify the return UDP port, and can test for the precense of more sophisticated scenarios where an attacker is able to redirect to another port to attempt to exploit other services on the sender than just ones that live on the sending port.
+
+### Security Monitoring
+Monitor for these log signatures indicating potential compromise attempts:
+- `SUSPICIOUS RETURN TRAFFIC` in system logs
+- Blocked UDP packets from cloud server IPs
+- Unexpected ICMP responses to sender
+
+These events should trigger security alerts as they represent clear attack attempts.
 
 ## Troubleshooting
 
