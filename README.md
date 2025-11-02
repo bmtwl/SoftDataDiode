@@ -1,5 +1,6 @@
 <p align="center">
-<img src="https://github.com/user-attachments/assets/5cb569c6-34cc-4ee4-b7a4-c961714234ce" width="500">
+<img src="https://github.com/user-attachments/assets/5cb569c6-34cc-4ee4-b7a4-c961714234ce#gh-light-mode-only" width="500">
+<img src="https://github.com/user-attachments/assets/e7deb0fa-2688-4ddf-b190-a700e038c23f#gh-dark-mode-only" width="500">
 </p>
 
 ## Soft Data Diode Streaming System 
@@ -41,14 +42,7 @@ graph TD
     subgraph "Internet"
         HTTPSERVER <--> WEBBROWSER[Web Browser]
         FILESYSTEM <--> FILECLIENT[SFTP Client]
-    end
-
-    
-    
-    classDef secure fill:#e1f5fe,stroke:#01579b;
-    classDef cloud fill:#ffebee,stroke:#b71c1c;
-    classDef client fill:#fff3e0,stroke:#e65100;
-    
+    end    
     class SOURCE,SENDER,SENDERPROCESSING secure
     class CLOUDIP,RECEIVER,RECEIVERPROCESSING,BUFFER,HTTPSERVER,FILESYSTEM cloud
     class WEBBROWSER,FILECLIENT client
