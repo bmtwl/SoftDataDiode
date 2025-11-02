@@ -1,0 +1,35 @@
+[Unit]
+Description=Remote View Listener Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/SoftDataDiode/multireceiver/ddmultireceiver.py --config /opt/SoftDataDiode/multireceiver/config.json
+WorkingDirectory=/opt/SoftDataDiode
+Restart=always
+RestartSec=5
+User=ddreceiver
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+# Resource limits
+LimitNOFILE=1024
+LimitNPROC=64
+MemoryMax=1536M
+CPUQuota=5%
+
+[Install]
+WantedBy=multi-user.target
