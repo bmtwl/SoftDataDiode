@@ -250,7 +250,7 @@ python filereceiver/ddfilereceiver.py \
 ### Running as an OS Service
 This will be highly specific to your Operating System.
 
-There is an example of a systemd service definition in the hardening folder in this repo. You should adapt it to your needs, especially the read-write paths and resource limits section. e.g. the example file has cpu usage capped at 5%, which is in the sustainable limits of most VPS services, but which may not be enough for full production.
+There is an example of a systemd service definition for the multireceiver in the hardening folder in this repo. You should adapt it to your needs, especially the read-write paths and resource limits section. e.g. the example file has cpu usage capped at 5%, which is in the sustainable limits of most VPS services, but which may not be enough for full production.
 
 ## Security Considerations
 
@@ -267,8 +267,8 @@ There are a number of mitigations possible:
 
 These mitigations can generally "stack", allowing a defence in depth approach that approaches a guarantee of security.
 
->[!INFO]
->You might think that block rules on your hardware firewall set to prevent return traffic would be a possible mitigation, but contrary to intuition these will generally not work. The packet will be part of an established flow and hit the fast-path before any rules are evaluated. YMMV with your specific firewall platform, but be prepared for disappointment.
+>[!NOTE]
+>You might think that block rules on your hardware firewall preventing return traffic would be a possible mitigation, but contrary to intuition these will generally not work. The packet will be part of an established flow and hit the fast-path before any rules are evaluated. YMMV with your specific firewall platform, but be prepared for disappointment.
 
 All this said, if the sender is behind a NATting firewall then it is highly unlikely that the receiver would be practically able to send a packet back on a different port. The firewall would have chosen a random port to forward the traffic from, and if the receiver doesn't send the return packets to the same port, then it would be dropped. If the receiver _does_ send packets back to that same randomized port, then it is mapped back to the original port, where there is nothing listening if implemented as per this guide.
 
@@ -310,9 +310,9 @@ Reference your switch vendors documentation for specific configuration procedure
 #### Linux 
 iptables can be set up in exactly the way we want:
 
-Optionally start by logging blocks (needs to be first or the packet will be dropped before being logged):
+Optionally start by logging blocks. This is a valuable signal as this traffic should never happen outside of testing (needs to be first or the packet will be dropped before being logged):
 
-    iptables -A INPUT -p udp -s 1.2.3.4 --sport 5005:5020 -m state --state ESTABLISHED,RELATED -j LOG --log-prefix "IPTABLES DROP: " --log-level 7
+    iptables -A INPUT -p udp -s 1.2.3.4 --sport 5005:5020 -m state --state ESTABLISHED,RELATED -j LOG --log-prefix "BACKPROPAGATION DROP: " --log-level 7
     
 Then create the actual rule:
 
@@ -321,13 +321,19 @@ Then create the actual rule:
 This will track the session state for the outgoing packets to your cloud server (1.2.3.4) and drop anything returning from this session on the ports that the senders are using (between 5005 and 5020 in this example). Perfect!
 Now that you have a tight rule to just catch the specfic traffic you're looking for, you can use a test script from the mitigations section below and watch the iptables counters with `iptables -v -n -L`. The counters should go up on the rule you specified if they're being caught. You can sanity check this with tcpdump or wireshark to see if _anything_ from the receiver is being seen on the sender side. As a side-note: tcpdump/libpcap sees packets before they hit the iptables firewall, so you may see the traffic even if its getting dropped, which is why looking at packet-counts for your rules is important.
 
-As cool as that is, we can probably just drop _all_ traffic returning from the cloud server:
+In addition, we can probably just drop _all_ traffic returning from the cloud server in a final catchall rule:
 
+    iptables -A INPUT --source 1.2.3.4 -j LOG --log-prefix "BACKPROPAGATION DROP: " --log-level 7
     iptables -A INPUT --source 1.2.3.4 -j DROP
 
 #### Others
 Windows (and other host/agent firewalls) may be able to do something similar by positioning the return block rule at the top of the ruleset, but this requires further investigation.
 These will need to be verified and documented system-by-system.
+
+>[!CAUTION]
+>Be sure to harden your cloud server as much as possible!
+>
+>While we have been concentrating on ways in which we can prevent lateral movement, an attacker that gained access to the cloud server could also do nasty things like serve malware to users of the cloud server, use it as part of a botnet, use it as a spam host, mine crypto and many other things that you would not want to happen.
 
 #### Testing your Hardened Infrastruture
 The "hardening" folder in this repository includes scripts to test the ability of your infrastructure to repel attempts to backpropagate into the secure network.
