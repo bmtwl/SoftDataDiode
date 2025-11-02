@@ -26,7 +26,7 @@ The data itself is encrypted with AES-256-GCM prior to being transmitted with a 
 graph TD
     subgraph "Secure Environment"
         SOURCE[[Source System<BR>Web, RTSP, VNC or Files]] --> SENDER([Data Diode Sender])
-        SENDER --> SENDERPROCESSING[\\UDP Packets<br/>Encrypted & Fragmented\\]
+        SENDER --> SENDERPROCESSING[\UDP Packets<br/>Encrypted & Fragmented\]
     end
     
     SENDERPROCESSING -.->|Fire-and-Forget<br/>One-Way UDP| CLOUDIP[/Cloud Server<br/>Public IP:Port/]
