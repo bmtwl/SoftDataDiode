@@ -1,0 +1,13 @@
+{
+    "mode": "filesync",
+    "cloud_ip": "1.2.3.4",
+    "cloud_port": 5012,
+    "key": "your-base64-encoded-key-here",
+    "debug": true,
+    "max_packet_size": 1400,
+    "sync_path": "/home/user/documents",
+    "preserve_path": true,
+    "include_dot_files": false,
+    "max_file_age": 24.0,
+    "sync_interval": 300
+}
