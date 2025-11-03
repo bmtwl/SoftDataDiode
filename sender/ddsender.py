@@ -575,7 +575,7 @@ modes:
     # VNC mode options
     vnc_group = parser.add_argument_group('vnc mode options')
     vnc_group.add_argument('--vnc-host', help='VNC host')
-    vnc_group.add_argument('--vnc-password', help='Password for VNC authentication')
+    vnc_group.add_argument('--vnc-password', help='Path to encoded password file for VNC authentication. Create with vncpasswd utility')
     vnc_group.add_argument('--vnc-display', type=int, default=0, help='The VNC Display Number (default: 0)')
 
     # Filesync mode options
