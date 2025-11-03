@@ -1,0 +1,14 @@
+{
+    "mode": "vnc",
+    "cloud_ip": "1.2.3.4",
+    "cloud_port": 5010,
+    "key": "your-base64-encoded-key-here",
+    "debug": true,
+    "max_packet_size": 1400,
+    "vnc_host": "192.168.1.150",
+    "vnc_password": "~/.vnc/passwd",
+    "vnc_display": 0,
+    "capture_resolution": "1024x768",
+    "jpeg_quality": 50,
+    "interval": 1.0
+}

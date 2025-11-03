@@ -165,9 +165,9 @@ class StreamReceiver:
                     self.logger.warning("Packet too short to contain header")
                     continue
 
-                header = decrypted_data[:8]
-                sequence_number, frag_index, total_frags = struct.unpack('>IHH', header)
-                fragment_data = decrypted_data[8:]
+                header = decrypted_data[:16]
+                sequence_number, frag_index, total_frags = struct.unpack('>QII', header)
+                fragment_data = decrypted_data[16:]
 
                 self.stats['fragments_received'] += 1
 

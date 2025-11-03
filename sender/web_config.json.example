@@ -1,0 +1,16 @@
+{
+    "mode": "web",
+    "cloud_ip": "1.2.3.4",
+    "cloud_port": 5000,
+    "key": "your-base64-encoded-key-here",
+    "debug": true,
+    "max_packet_size": 1400,
+    "source": "https://example.com",
+    "username": "web_user",
+    "password": "web_password",
+    "timeout": 30,
+    "web_capture_element": "body",
+    "capture_resolution": "1920x1080",
+    "jpeg_quality": 75,
+    "interval": 5
+}

@@ -1,0 +1,14 @@
+{
+    "mode": "rtsp",
+    "cloud_ip": "1.2.3.4",
+    "cloud_port": 5005,
+    "key": "your-base64-encoded-key-here",
+    "debug": true,
+    "max_packet_size": 1400,
+    "rtsp_url": "rtsp://192.168.1.200:554/stream",
+    "username": "rtsp_user",
+    "password": "rtsp_password",
+    "capture_resolution": "1280x720",
+    "jpeg_quality": 60,
+    "interval": 0.1
+}
