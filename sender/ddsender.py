@@ -527,19 +527,88 @@ def load_config(config_file):
         print(f"Error loading config file {config_file}: {e}")
         return {}
 
-def merge_config_with_args(config, args):
+def merge_config_with_args(config, args, parser):
     """Merge configuration from file with command line arguments"""
     # Convert args to dict for easier handling
     args_dict = vars(args)
 
-    # Merge config with args, prioritizing args (CLI overrides config)
+    # Start with config file values
     merged = config.copy()
+
+    # Add any args that aren't in config (like defaults)
+    for key in args_dict:
+        if key not in merged:
+            merged[key] = args_dict[key]
+
+    # Override with command line arguments that were explicitly provided
     for key, value in args_dict.items():
-        if value is not None or key not in merged:
+        # Check if argument was explicitly provided (not default)
+        if value != parser.get_default(key):
             merged[key] = value
 
     return merged
 
+def truncate_string(s, max_length=20):
+    """Truncate string and add ellipsis if too long"""
+    if s is None:
+        return ''
+    s = str(s)
+    if len(s) > max_length:
+        return s[:max_length-3] + '...'
+    return s
+
+def dump_debug_config_table(config, args, parser):
+    """Dump final configuration in table format for debugging"""
+    logger = setup_logging(True)  # Force debug logging for this function
+
+    # Get all possible arguments
+    arg_defaults = {}
+    for action in parser._actions:
+        if action.dest != 'help' and action.dest != 'config':
+            arg_defaults[action.dest] = action.default
+
+    # Get CLI values (non-None values from args)
+    cli_values = {k: v for k, v in vars(args).items() if v is not None and k != 'config'}
+
+    # Get config file values
+    config_values = config.copy()
+
+    # Get all unique keys
+    all_keys = set(arg_defaults.keys()) | set(config_values.keys()) | set(cli_values.keys())
+    all_keys = sorted([k for k in all_keys if k not in ['help', 'config']])
+
+    logger.debug("=== DEBUG CONFIGURATION TABLE ===")
+
+    # Header
+    logger.debug(f"{'Parameter':<25} {'Default':<20} {'Config File':<20} {'CLI':<20} {'Final':<20}")
+    logger.debug("-" * 105)
+
+    # Values
+    for key in all_keys:
+        default_val = arg_defaults.get(key, '')
+        config_val = config_values.get(key, '')
+        cli_val = cli_values.get(key, '')
+        final_val = config.get(key, '')
+
+        # Mask sensitive values
+        if key in ['key', 'password', 'vnc_password']:
+            if config_val:
+                config_val = '***MASKED***'
+            if cli_val:
+                cli_val = '***MASKED***'
+            if final_val:
+                final_val = '***MASKED***'
+
+        # Truncate long strings
+        default_val = truncate_string(default_val, 20)
+        config_val = truncate_string(config_val, 20)
+        cli_val = truncate_string(cli_val, 20)
+        final_val = truncate_string(final_val, 20)
+
+        logger.debug(f"{key:<25} {default_val:<20} {config_val:<20} {cli_val:<20} {final_val:<20}")
+
+    logger.debug("=== END CONFIGURATION TABLE ===")
+    
 def main():
     parser = argparse.ArgumentParser(
         description='Data Diode Sender',
@@ -605,7 +674,10 @@ modes:
         config = load_config(args.config)
 
     # Merge config with command line arguments
-    config = merge_config_with_args(config, args)
+    config = merge_config_with_args(config, args, parser)
+
+    if config.get('debug', True):
+        dump_debug_config_table(config, args, parser)
 
     # Validate required arguments
     required_args = ['mode', 'cloud_ip', 'cloud_port', 'key']
