@@ -35,6 +35,8 @@ def create_webdriver():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-crash-reporter")
+    chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--window-size=1280,720")
     chrome_options.add_argument("--disable-web-security")
     chrome_options.add_argument("--disable-features=VizDisplayCompositor")
