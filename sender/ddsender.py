@@ -792,7 +792,8 @@ modes:
                     shutil.rmtree(chrome_temp_dir)
                     logger.info(f"Successfully removed custom temp dir: {chrome_temp_dir}")
                 except OSError as e:
-                    logger.error(f"Error removing custom temp dir {chrome_temp_dir}: {e}")        sock.close()
+                    logger.error(f"Error removing custom temp dir {chrome_temp_dir}: {e}")
+                    sock.close()
         logger.info("Sender shutdown complete")
 
 if __name__ == "__main__":
