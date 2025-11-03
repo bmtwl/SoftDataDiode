@@ -64,7 +64,7 @@ graph TD
 
 ## Installation
 
-1. **Clone the repository:**
+2. **Clone the repository:**
 ```bash
 cd /opt
 git clone https://github.com/bmtwl/SoftDataDiode.git
@@ -88,6 +88,8 @@ source venv/bin/activate
    ```bash
    pip install opencv-python-headless cryptography selenium numpy
    ```
+>[!IMPORTANT]
+>You will also need a browser and webdriver installed for Selenium to work, even on a headless OS.
 
    **Receiver Side:**
    ```bash
@@ -349,7 +351,10 @@ These events should trigger security alerts as they represent clear attack attem
 ## Troubleshooting
 
 ### Selenium crashes because it can't find a chrome/chromium driver
-There are broken OS packages on Debian, at least. The recommended way to run the sender is with a `venv`.
+There are many reasons why the sender may crash with a Selenium error.
+For one, Selenium still needs a browser and a webdriver installed to work. So make sure you have those installed and working on your OS.
+Also, there are broken `python3-selenium` OS packages on Debian, at least. The recommended way to run the sender is with a `venv`.
+See [The Selenium Project Homepage](https://www.selenium.dev/documentation/overview/) for more information.
 
 ### Resource usage is too high
 There are a few strategies to reduce resource usage:
