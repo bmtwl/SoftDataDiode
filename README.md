@@ -220,10 +220,15 @@ python sender/ddsender.py \
   --max-file-age 1 
 ```
 
+### Sender Config File
+```bash
+python sender/ddsender.py --config  /path/to/sender_config.json
+```
+
 ### Running the Receiver
 
 ```bash
-# Single receiver usage
+# Single image stream receiver usage
 python receiver/ddreceiver.py \
   -udp-host 1.2.3.4 \
   --udp-port 5005 \
@@ -231,8 +236,8 @@ python receiver/ddreceiver.py \
   --http-port 8000 \
   --key "your-base64-key-here"
 
-# Multi-receiver usage
-python multireceiver/ddmultireceiver.py --config /path/to/config.json
+# Image Multi-receiver usage
+python multireceiver/ddmultireceiver.py --config /path/to/receiver_config.json
 
 # Filesync receiver usage
 python filereceiver/ddfilereceiver.py \
