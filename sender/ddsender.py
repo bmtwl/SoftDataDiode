@@ -9,6 +9,7 @@ import shutil
 import os
 import hashlib
 import json
+import tempfile
 from datetime import datetime, timedelta
 from cryptography.fernet import Fernet
 from selenium import webdriver
@@ -28,7 +29,7 @@ def setup_logging(debug=False):
     )
     return logging.getLogger('DataDiodeSender')
 
-def create_webdriver():
+def create_webdriver(chrome_temp_dir):
     """Create headless Chrome webdriver for screenshots"""
     chrome_options = Options()
     chrome_options.add_argument("--headless")
@@ -40,6 +41,8 @@ def create_webdriver():
     chrome_options.add_argument("--window-size=1280,720")
     chrome_options.add_argument("--disable-web-security")
     chrome_options.add_argument("--disable-features=VizDisplayCompositor")
+    chrome_options.add_argument(f"--user-data-dir={chrome_temp_dir}")
+    chrome_options.add_argument(f"--disk-cache-dir={chrome_temp_dir}/cache")
     chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])  # Suppress logging
     chrome_options.add_experimental_option('useAutomationExtension', False)
 
@@ -640,7 +643,10 @@ modes:
             if 'source' not in config or config['source'] is None:
                 logger.error("Web mode requires --source URL")
                 return
-            driver = create_webdriver()
+
+            chrome_temp_dir = tempfile.mkdtemp(prefix='chrome_temp_profile_')
+
+            driver = create_webdriver(chrome_temp_dir)
             capture_func = lambda: capture_webpage(
                 config['source'], driver, config.get('username'), config.get('password'), 
                 config.get('timeout', 30), config.get('web_capture_element', 'body'), 
@@ -779,7 +785,14 @@ modes:
     finally:
         if config['mode'] == 'web':
             driver.quit()
-        sock.close()
+            logger.info("Waiting for chromium to exit...")
+            time.sleep(5)
+            if os.path.exists(chrome_temp_dir):
+                try:
+                    shutil.rmtree(chrome_temp_dir)
+                    logger.info(f"Successfully removed custom temp dir: {chrome_temp_dir}")
+                except OSError as e:
+                    logger.error(f"Error removing custom temp dir {chrome_temp_dir}: {e}")        sock.close()
         logger.info("Sender shutdown complete")
 
 if __name__ == "__main__":
