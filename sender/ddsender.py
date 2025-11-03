@@ -590,7 +590,7 @@ modes:
     capture_group = parser.add_argument_group('capture options')
     capture_group.add_argument('--capture-resolution', default='1280x720', help='Capture resolution (default: 1280x720)')
     capture_group.add_argument('--jpeg-quality', type=int, default=60, help='JPEG encoding quality 0-100 (default: 60)')
-    capture_group.add_argument('--interval', type=float, default=0.1, help='Capture interval in seconds (web/rtsp/vnc)')
+    capture_group.add_argument('--interval', type=float, default=10, help='Capture interval in seconds (web/rtsp/vnc)')
 
     args = parser.parse_args()
 
@@ -657,7 +657,7 @@ modes:
                     config.get('jpeg_quality', 60)
                 )
                 sequence_number += 1
-                time.sleep(config.get('interval', 0.1))
+                time.sleep(config.get('interval', 10))
 
         elif config['mode'] == 'rtsp':
             if 'rtsp_url' not in config or config['rtsp_url'] is None:
@@ -679,7 +679,7 @@ modes:
                     config.get('jpeg_quality', 60)
                 )
                 sequence_number += 1
-                time.sleep(config.get('interval', 0.1))
+                time.sleep(config.get('interval', 10))
 
         elif config['mode'] == 'vnc':
             if 'vnc_host' not in config or config['vnc_host'] is None:
@@ -706,7 +706,7 @@ modes:
                     config.get('jpeg_quality', 60)
                 )
                 sequence_number += 1
-                time.sleep(config.get('interval', 0.1))
+                time.sleep(config.get('interval', 10))
 
         elif config['mode'] == 'filesync':
             if 'sync_path' not in config or config['sync_path'] is None:
