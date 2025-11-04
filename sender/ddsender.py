@@ -641,6 +641,7 @@ modes:
     web_group.add_argument('--password', help='Password for authentication')
     web_group.add_argument('--timeout', type=int, default=30, help='Timeout for web page loading (seconds)')
     web_group.add_argument('--web-capture-element', default='body', help='CSS selector for web capture element (default: body)')
+    web_group.add_argument('--pause-browser', default='false', help='Pause the browser rendering between capturing frames (default: false)')
 
     # RTSP mode options
     rtsp_group = parser.add_argument_group('rtsp mode options')
@@ -737,7 +738,11 @@ modes:
                     config.get('jpeg_quality', 60)
                 )
                 sequence_number += 1
-                time.sleep(config.get('interval', 10))
+                if config.get('debug', True):
+                    driver.execute_cdp_cmd("Debugger.resume", {})
+                 time.sleep(config.get('interval', 10))
+                if config.get('debug', True):
+                    driver.execute_cdp_cmd("Debugger.resume", {})
 
         elif config['mode'] == 'rtsp':
             if 'rtsp_url' not in config or config['rtsp_url'] is None:
