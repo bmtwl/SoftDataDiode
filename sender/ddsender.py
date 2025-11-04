@@ -739,8 +739,8 @@ modes:
                 )
                 sequence_number += 1
                 if config.get('debug', True):
-                    driver.execute_cdp_cmd("Debugger.resume", {})
-                 time.sleep(config.get('interval', 10))
+                    driver.execute_cdp_cmd("Debugger.pause", {})
+                time.sleep(config.get('interval', 10))
                 if config.get('debug', True):
                     driver.execute_cdp_cmd("Debugger.resume", {})
 
