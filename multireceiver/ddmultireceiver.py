@@ -435,8 +435,46 @@ class StreamHandler(BaseHTTPRequestHandler):
                             <div class="freshness-text" id="text-{stream_name}">No data</div>
                         </div>
                     </div>
-                    <img src="/{stream_name}/stream" width="{stream.display_resolution[0]}" height="{stream.display_resolution[1]}" />
+                    <img id="mjpeg-stream-{stream_name}" src="/{stream_name}/stream" width="{stream.display_resolution[0]}" height="{stream.display_resolution[1]}" data-stream-url="/{stream_name}/stream" />
                     <p><a href="/" class="back-link">Back to Streams</a></p>
+
+                    <script>
+                        // Self-invoking function to manage a single stream instance
+                        (function() {{
+                            const streamName = "{stream_name}";
+                            const mjpegImg = document.getElementById(`mjpeg-stream-${{streamName}}`);
+                            const streamUrl = mjpegImg.getAttribute('data-stream-url');
+
+                            // Function to pause the stream
+                            function pauseStream() {{
+                                if (mjpegImg && mjpegImg.src !== '') {{ // Only pause if it's currently running
+                                    mjpegImg.src = '';
+                                    console.log(`Stream ${{streamName}} paused.`);
+                                }}
+                            }}
+
+                            // Function to resume the stream
+                            function resumeStream() {{
+                                if (mjpegImg) {{
+                                    // Append a timestamp to prevent browser caching issues
+                                    const liveUrl = streamUrl
+                                    if (mjpegImg.src === '' || mjpegImg.src !== liveUrl) {{
+                                        mjpegImg.src = liveUrl;
+                                        console.log(`Stream ${{streamName}} resumed.`);
+                                    }}
+                                }}
+                            }}
+
+                            // Listen for visibility changes
+                            document.addEventListener('visibilitychange', function() {{
+                                if (document.hidden) {{
+                                    pauseStream();
+                                }} else {{
+                                    resumeStream();
+                                }}
+                            }});
+                        }})();
+                    </script>
 
                     <script>
                         function updateFreshness() {{
@@ -492,7 +530,7 @@ class StreamHandler(BaseHTTPRequestHandler):
 
             # Initialize with -1 to ensure first frame is sent immediately
             last_seq = -1
-            
+
             # Send the most recent frame immediately if available
             with stream.buffer_lock:
                 if stream.frame_buffer:
@@ -501,7 +539,7 @@ class StreamHandler(BaseHTTPRequestHandler):
                         frame_resized = cv2.resize(frame, stream.display_resolution)
                         _, buffer = cv2.imencode('.jpg', frame_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                         frame_data = buffer.tobytes()
-                        
+
                         try:
                             # Send as first frame in multipart stream (twice to satisfy Chrome/Edge/Webkit)
                             frames_to_send = 2
