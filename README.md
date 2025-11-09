@@ -3,22 +3,31 @@
 <img src="https://github.com/user-attachments/assets/e7deb0fa-2688-4ddf-b190-a700e038c23f#gh-dark-mode-only" width="500">
 </p>
 
-## Soft Data Diode Streaming System 
+## Internet Edge Soft <ins title='Yes, without a hardware component this is technically a "Unidirectional Application Gateway", however since this software all still works in conjunction with a unidrectional airgap I think "Soft Data Diode Tools" is still defensibly accurate.'>Data Diode</ins> Streaming Tools 
 
-A secure, one-way data streaming solution that implements a software-based data diode for transmitting web content, RTSP streams, vnc sessions and files from a secure network zone to another network (eg. the cloud) without exposing any return path.
+A secure, one-way data streaming solution that implements a software-based data diode for transmitting web content, RTSP streams, vnc sessions and files from a secure network zone (eg. your intranet) to another network (eg. the cloud) without exposing any return path.
+
+The development of these tools was prompted by a need to safely share internal resources with an external party without exposing any of the internal network to potential attack or compromise. It differs from other data-diode solutions in that it isn't intended to pass through an actual air-gap, but through the implied air-gap of an network edge firewall. In short, a desire to reduce the exploitable surface are of an internal network by eliminating services that had been running in a DMZ.
 
 This protects the secure service in two ways: it acts as a data diode, never establishing a 2-way communication link, and for web and vnc it also acts as an opto-isolator, transforming that content into a static image to prevent interaction, HTML inspection or other unintentional information leakage or external control.
 
-Even if the receiver server is compromised, there should be no way to move laterally back into the sender's network if appropriate mitigations have been implemented as-per instructions.
+Even if the receiver server is compromised, there should be no way to move laterally back into the sender's network. This is double-true if appropriate mitigations have been implemented as-per instructions.
 
 The data itself is encrypted with AES-256-GCM prior to being transmitted with a simple pre-shared key.
 
 >[!IMPORTANT]
->This system differs from a pure hardware Data Diode in that all parts of the system are implemented in software in order to achieve the same goal at zero cost. This means that there is no physical "air gap" like a true unidirectional diode/opto-isolator would provide. Hardware Data Diodes are expensive for a reason! The tradeoff is that the savings come with a need to vet the configuration in order to guarantee correctness. A defence-in-depth approach is discussed below in the [Security Considerations](#security-considerations) and [Hardening](#hardening) sections.
+>This system differs from a pure hardware Data Diode in that all parts of the system are implemented in software in order to achieve the same goal at zero cost. This means that there is no physical "air gap" like a true unidirectional diode/opto-isolator would provide. Certified Hardware Data Diodes are expensive for a reason! The tradeoff is that the savings come with a need to vet the configuration in order to guarantee correctness. A defence-in-depth approach is discussed below in the [Security Considerations](#security-considerations) and [Hardening](#hardening) sections.
 >The security model relies on:
 >- Application-level unidirectionality (sender never binds to listening ports)
 >- Network-level blocking (firewall rules and ACLs prevent return traffic)
 >- Infrastructure-level detection (logging and alerting on suspicious attempts)
+>
+>If you are looking for an actual hardware data-diode, there are inexpensive ways to get there:
+>- https://datadiode.net/hardware/
+>- https://github.com/mitcdh/diode-switch-config
+>- https://github.com/wavestone-cdt/dyode
+>
+>Any of these projects can be used in conjunction with the tools in this repo to create a true physical unidirectionality interlock.
 
 ## Architecture
 
