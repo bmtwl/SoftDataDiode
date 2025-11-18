@@ -274,6 +274,7 @@ There are a number of mitigations possible:
    - Firewalls that support SNAT may be configured with a return address of something like 192.0.2.x (often used as a blackhole address) or an unused internal address as a canary
    - Switch ACLs to prevent these specific return UDP traffic flows may be created at a choke point
    - OS level firewalls may be used to attempt to block specific types of traffic. Linux iptables is flexible enough to do exactly what we want (statefully deny return traffic)
+   - Use a [packet forwarder](https://github.com/bmtwl/udp-ebpf-monitor) that mangles the packets and breaks return state
 
 These mitigations can generally "stack", allowing a defence in depth approach that approaches a guarantee of security.
 
@@ -317,7 +318,7 @@ Switch ACLs that operate at Layer 3 should be able to block arbitrary traffic, w
 Reference your switch vendors documentation for specific configuration procedures.
 
 ### Software, OS or XDR agent Firewalls
-#### Linux 
+#### Linux iptables/nftables
 iptables can be set up in exactly the way we want:
 
 Optionally start by logging blocks. This is a valuable signal as this traffic should never happen outside of testing (needs to be first or the packet will be dropped before being logged):
@@ -335,6 +336,9 @@ In addition, we can probably just drop _all_ traffic returning from the cloud se
 
     iptables -A INPUT --source 1.2.3.4 -j LOG --log-prefix "BACKPROPAGATION DROP: " --log-level 7
     iptables -A INPUT --source 1.2.3.4 -j DROP
+
+#### Linux eBPF modules
+You can use a [packet forwarder](https://github.com/bmtwl/udp-ebpf-monitor) to limit the service's ablity to talk to the general network, as well as mangle the packet in a way that breaks network state, making return traffic impossible.
 
 #### Others
 Windows (and other host/agent firewalls) may be able to do something similar by positioning the return block rule at the top of the ruleset, but this requires further investigation.
@@ -375,7 +379,8 @@ There are a few strategies to reduce resource usage:
 1. Reduce the capture resolution of the image that is being sent/received.
 2. Increase the interval between transmissions.
 3. Reduce the jpeg quality (This may make text hard to read. The default of `60` is already a good balance of quality vs size).
-4. Switch from Python to Pypy (relatively hard to do and of limited value. The cpu-intensive Python libraries we are using are already in high-performance C).
+4. If you're using a packet forwarding program like socat, try using this [eBPF packet forwarder](https://github.com/bmtwl/udp-ebpf-monitor) I made especially as a companion to this project. It uses less than 10% of the cpu to do the same thing.
+5. Switch from Python to Pypy (relatively hard to do and of limited value. The cpu-intensive Python libraries we are using are already in high-performance C).
 
 ### Traffic isn't getting through to the receiver
 Check for the presence of UDP packets using something like Wireshark or `tcpdump udp and port 5005`. You should see a constant stream from the sender to the receiver on both hosts.
