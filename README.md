@@ -102,7 +102,7 @@ source venv/bin/activate
 
    **Receiver Side:**
    ```bash
-   pip install pil cryptography
+   pip install Pillow cryptography
    ```
 
 4. **Generate encryption key (must be same key on both sender and receiver sides) :**
