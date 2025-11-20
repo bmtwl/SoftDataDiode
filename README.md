@@ -102,7 +102,7 @@ source venv/bin/activate
 
    **Receiver Side:**
    ```bash
-   pip install opencv-python-headless cryptography numpy
+   pip install pil cryptography
    ```
 
 4. **Generate encryption key (must be same key on both sender and receiver sides) :**
@@ -129,7 +129,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
       "udp_host": "0.0.0.0",
       "udp_port": 5005,
       "key": "your-generated-key-here",
-      "buffer_size": 5
+      "buffer_size": 2
     },
     "camera1": {
       "name": "Security Camera 1",
@@ -137,7 +137,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
       "udp_host": "0.0.0.0",
       "udp_port": 5006,
       "key": "your-generated-key-here",
-      "buffer_size": 5,
+      "buffer_size": 2,
       "display_resolution": "1280x720"
     },
     "desktop1": {
@@ -146,7 +146,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
       "udp_host": "0.0.0.0",
       "udp_port": 5007,
       "key": "your-generated-key-here",
-      "buffer_size": 5
+      "buffer_size": 2
     }
   }
 }
@@ -233,6 +233,8 @@ python sender/ddsender.py \
 ```bash
 python sender/ddsender.py --config  /path/to/sender_config.json
 ```
+>[!TIP]
+>See `sender` folder for JSON config examples
 
 ### Running the Receiver
 
@@ -248,6 +250,9 @@ python receiver/ddreceiver.py \
 # Image Multi-receiver usage
 python multireceiver/ddmultireceiver.py --config /path/to/receiver_config.json
 
+>[!TIP]
+>See `multireceiver` folder for JSON config examples
+
 # Filesync receiver usage
 python filereceiver/ddfilereceiver.py \
     --udp-host 1.2.3.4 \
@@ -261,6 +266,8 @@ python filereceiver/ddfilereceiver.py \
 This will be highly specific to your Operating System.
 
 There is an example of a systemd service definition for the multireceiver in the hardening folder in this repo. You should adapt it to your needs, especially the read-write paths and resource limits section. e.g. the example file has cpu usage capped at 5%, which is in the sustainable limits of most VPS services, but which may not be enough for full production.
+
+In general, having a separation of duties by creating service accounts without interactive login rights for each service is recommended. Locking these accounts down to the smallest set of network/filesystem/etc privileges possible is also recommended.
 
 ## Security Considerations
 
@@ -323,19 +330,25 @@ iptables can be set up in exactly the way we want:
 
 Optionally start by logging blocks. This is a valuable signal as this traffic should never happen outside of testing (needs to be first or the packet will be dropped before being logged):
 
-    iptables -A INPUT -p udp -s 1.2.3.4 --sport 5005:5020 -m state --state ESTABLISHED,RELATED -j LOG --log-prefix "BACKPROPAGATION DROP: " --log-level 7
-    
+```bash
+iptables -A INPUT -p udp -s 1.2.3.4 --sport 5005:5020 -m state --state ESTABLISHED,RELATED -j LOG --log-prefix "BACKPROPAGATION DROP: " --log-level 7
+```
+
 Then create the actual rule:
 
-    iptables -A INPUT -p udp -s 1.2.3.4 --sport 5005:5020 -m state --state ESTABLISHED,RELATED -j DROP
-    
+```bash
+iptables -A INPUT -p udp -s 1.2.3.4 --sport 5005:5020 -m state --state ESTABLISHED,RELATED -j DROP
+```
+
 This will track the session state for the outgoing packets to your cloud server (1.2.3.4) and drop anything returning from this session on the ports that the senders are using (between 5005 and 5020 in this example). Perfect!
 Now that you have a tight rule to just catch the specfic traffic you're looking for, you can use a test script from the mitigations section below and watch the iptables counters with `iptables -v -n -L`. The counters should go up on the rule you specified if they're being caught. You can sanity check this with tcpdump or wireshark to see if _anything_ from the receiver is being seen on the sender side. As a side-note: tcpdump/libpcap sees packets before they hit the iptables firewall, so you may see the traffic even if its getting dropped, which is why looking at packet-counts for your rules is important.
 
 In addition, we can probably just drop _all_ traffic returning from the cloud server in a final catchall rule:
 
-    iptables -A INPUT --source 1.2.3.4 -j LOG --log-prefix "BACKPROPAGATION DROP: " --log-level 7
-    iptables -A INPUT --source 1.2.3.4 -j DROP
+```bash
+iptables -A INPUT --source 1.2.3.4 -j LOG --log-prefix "BACKPROPAGATION DROP: " --log-level 7
+iptables -A INPUT --source 1.2.3.4 -j DROP
+```
 
 #### Linux eBPF modules
 You can use a [packet forwarder](https://github.com/bmtwl/udp-ebpf-monitor) to limit the service's ablity to talk to the general network, as well as mangle the packet in a way that breaks network state, making return traffic impossible.
@@ -376,11 +389,12 @@ See [The Selenium Project Homepage](https://www.selenium.dev/documentation/overv
 
 ### Resource usage is too high
 There are a few strategies to reduce resource usage:
-1. Reduce the capture resolution of the image that is being sent/received.
-2. Increase the interval between transmissions.
-3. Reduce the jpeg quality (This may make text hard to read. The default of `60` is already a good balance of quality vs size).
-4. If you're using a packet forwarding program like socat, try using this [eBPF packet forwarder](https://github.com/bmtwl/udp-ebpf-monitor) I made especially as a companion to this project. It uses less than 10% of the cpu to do the same thing.
-5. Switch from Python to Pypy (relatively hard to do and of limited value. The cpu-intensive Python libraries we are using are already in high-performance C).
+1. Increase the interval between transmissions.
+2. Reduce the capture resolution of the image that is being sent.
+3. Avoid resizing the image. Leave the resolution parameter out and the receiver will pass the incoming image back out to the client as-is
+4. Reduce the jpeg quality (This may make text hard to read. The default of `60` is already a good balance of quality vs size).
+5. If you're using a packet forwarding program like socat, try using this [eBPF packet forwarder](https://github.com/bmtwl/udp-ebpf-monitor). I made it specifically as a companion to this project. It uses less than 10% of the cpu to do the same thing.
+6. Switch from Python to Pypy (relatively hard to do and of limited value. The cpu-intensive Python libraries we are using are already in high-performance C).
 
 ### Traffic isn't getting through to the receiver
 Check for the presence of UDP packets using something like Wireshark or `tcpdump udp and port 5005`. You should see a constant stream from the sender to the receiver on both hosts.
@@ -397,10 +411,6 @@ You can start the sender or receiver with the `--debug` flag, or turn on debuggi
 If this still doesn't help, please create an issue in the repo.
 
 ## Known issues
-
-### My logs have lots of `I/O operation on closed file` events in them
-This is due to the way the Python http server flushes out connections and there is no simple workaround.
-I may do some custom exception handling in the future to clean these up, but for now they can be safely ignored.
 
 ### Very large files don't come through consistently
 If you are trying to transfer very large files, a single packet being lost or corrupted during transmission will cause the receiver to throw the whole thing away.
