@@ -9,8 +9,6 @@ import os
 import base64
 from collections import deque, defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import cv2
-import numpy as np
 from cryptography.fernet import Fernet
 
 # Embedded favicon (BASE64 encoded 16x16 ICO file)
@@ -25,8 +23,12 @@ class StreamReceiver:
         self.debug = debug
         self.logger = self.setup_logging(debug)
 
-        # Parse resolutions
-        self.display_resolution = self.parse_resolution(config.get('display_resolution', '1280x720'))
+        # Parse resolutions (only used if present)
+        self.display_resolution = None
+        if 'display_resolution' in config:
+            self.display_resolution = self.parse_resolution(config['display_resolution'])
+            from PIL import Image
+            import io
 
         # Initialize encryption
         try:
@@ -57,7 +59,8 @@ class StreamReceiver:
             'decryption_errors': 0,
             'fragments_received': 0,
             'frames_reassembled': 0,
-            'incomplete_frames': 0
+            'incomplete_frames': 0,
+            'bytes_received': 0
         }
 
         # UDP socket
@@ -76,8 +79,8 @@ class StreamReceiver:
             width, height = map(int, resolution_str.lower().split('x'))
             return (width, height)
         except Exception as e:
-            self.logger.warning(f"Invalid resolution '{resolution_str}', using default 1280x720: {e}")
-            return (1280, 720)
+            self.logger.warning(f"Invalid resolution '{resolution_str}', using original size: {e}")
+            return None
 
     def setup_logging(self, debug=False):
         """Setup logging configuration"""
@@ -141,6 +144,17 @@ class StreamReceiver:
 
         return None
 
+    def resize_jpeg(self, jpeg_bytes, target_size):
+        try:
+            img = Image.open(io.BytesIO(jpeg_bytes))
+            img = img.resize(target_size, Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            img.save(output, format='JPEG', quality=80)
+            return output.getvalue()
+        except Exception as e:
+            self.logger.error(f"Error resizing JPEG: {e}")
+            return jpeg_bytes  # Return original on error
+
     def udp_receiver(self):
         """Background thread to receive UDP packets"""
         self.logger.info(f"Listening for UDP packets on {self.config['udp_host']}:{self.config['udp_port']}")
@@ -149,6 +163,7 @@ class StreamReceiver:
             try:
                 data, addr = self.udp_sock.recvfrom(65535)
                 self.stats['packets_received'] += 1
+                self.stats['bytes_received'] += len(data)
 
                 if self.debug and self.stats['packets_received'] % 100 == 0:
                     self.logger.debug(f"Received packet {self.stats['packets_received']}: {len(data)} bytes from {addr}")
@@ -181,22 +196,16 @@ class StreamReceiver:
                 frame_data = self.reassemble_frame(sequence_number)
 
                 if frame_data:
-                    nparr = np.frombuffer(frame_data, np.uint8)
-                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    with self.buffer_lock:
+                        self.frame_buffer.append((sequence_number, frame_data))
+                        self.stats['frames_buffered'] += 1
+                        self.stats['frames_reassembled'] += 1
 
-                    if frame is not None:
-                        with self.buffer_lock:
-                            self.frame_buffer.append((sequence_number, frame))
-                            self.stats['frames_buffered'] += 1
-                            self.stats['frames_reassembled'] += 1
+                    # Update freshness timestamp
+                    with self.freshness_lock:
+                        self.last_frame_timestamp = time.time()
 
-                        # Update freshness timestamp
-                        with self.freshness_lock:
-                            self.last_frame_timestamp = time.time()
-
-                        self.logger.debug(f"Frame {sequence_number}: Successfully reassembled and buffered")
-                    else:
-                        self.logger.warning(f"Failed to decode frame {sequence_number}")
+                    self.logger.debug(f"Frame {sequence_number}: Successfully reassembled and buffered")
 
             except Exception as e:
                 self.logger.error(f"Error processing packet: {e}")
@@ -243,6 +252,24 @@ class ThreadingHTTPServer(HTTPServer):
 class StreamHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         self.server.receiver.logger.debug(f"{self.address_string()} - {format % args}")
+
+    def handle(self):
+        """Override handle to gracefully handle client disconnections"""
+        try:
+            super().handle()
+        except (BrokenPipeError, ValueError, OSError) as e:
+            # Client disconnected normally during streaming
+            if hasattr(self.server, 'receiver') and self.server.receiver.debug:
+                self.server.receiver.logger.debug(f"Client disconnected: {e}")
+        except Exception as e:
+            # Log other unexpected errors
+            if hasattr(self.server, 'receiver'):
+                self.server.receiver.logger.error(f"HTTP handler error: {e}")
+        finally:
+            try:
+                self.wfile.close()
+            except:
+                pass
 
     def do_GET(self):
         # Favicon
@@ -398,7 +425,12 @@ class StreamHandler(BaseHTTPRequestHandler):
             stream_name = self.path[1:]
             stream = self.server.receiver.streams[stream_name]
             stream_config = self.server.receiver.config['streams'][stream_name]
-            display_res = f"{stream.display_resolution[0]}x{stream.display_resolution[1]}"
+
+            # Get display resolution for img tag
+            width = height = ""
+            if stream.display_resolution:
+                width = f'width="{stream.display_resolution[0]}"'
+                height = f'height="{stream.display_resolution[1]}"'
 
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
@@ -435,7 +467,7 @@ class StreamHandler(BaseHTTPRequestHandler):
                             <div class="freshness-text" id="text-{stream_name}">No data</div>
                         </div>
                     </div>
-                    <img id="mjpeg-stream-{stream_name}" src="/{stream_name}/stream" width="{stream.display_resolution[0]}" height="{stream.display_resolution[1]}" data-stream-url="/{stream_name}/stream" />
+                    <img id="mjpeg-stream-{stream_name}" src="/{stream_name}/stream" {width} {height} style="display: none;" />
                     <p><a href="/" class="back-link">Back to Streams</a></p>
 
                     <script>
@@ -443,25 +475,26 @@ class StreamHandler(BaseHTTPRequestHandler):
                         (function() {{
                             const streamName = "{stream_name}";
                             const mjpegImg = document.getElementById(`mjpeg-stream-${{streamName}}`);
-                            const streamUrl = mjpegImg.getAttribute('data-stream-url');
+                            const streamUrl = `/{stream_name}/stream`;
+                            let abortController = null;
 
                             // Function to pause the stream
                             function pauseStream() {{
-                                if (mjpegImg && mjpegImg.src !== '') {{ // Only pause if it's currently running
-                                    mjpegImg.src = '';
-                                    console.log(`Stream ${{streamName}} paused.`);
+                                if (abortController) {{
+                                    abortController.abort();  // This actually closes the connection
+                                    abortController = null;
+                                    mjpegImg.style.display = 'none';
+                                    console.log(`Stream ${{streamName}} paused - connection closed.`);
                                 }}
                             }}
 
                             // Function to resume the stream
                             function resumeStream() {{
-                                if (mjpegImg) {{
-                                    // Append a timestamp to prevent browser caching issues
-                                    const liveUrl = streamUrl
-                                    if (mjpegImg.src === '' || mjpegImg.src !== liveUrl) {{
-                                        mjpegImg.src = liveUrl;
-                                        console.log(`Stream ${{streamName}} resumed.`);
-                                    }}
+                                if (!abortController) {{
+                                    abortController = new AbortController();
+                                    mjpegImg.style.display = 'block';
+                                    mjpegImg.src = streamUrl;
+                                    console.log(`Stream ${{streamName}} resumed.`);
                                 }}
                             }}
 
@@ -473,6 +506,9 @@ class StreamHandler(BaseHTTPRequestHandler):
                                     resumeStream();
                                 }}
                             }});
+
+                            // Start stream on page load
+                            resumeStream();
                         }})();
                     </script>
 
@@ -534,11 +570,11 @@ class StreamHandler(BaseHTTPRequestHandler):
             # Send the most recent frame immediately if available
             with stream.buffer_lock:
                 if stream.frame_buffer:
-                    current_seq, frame = stream.frame_buffer[-1]
-                    if frame is not None:
-                        frame_resized = cv2.resize(frame, stream.display_resolution)
-                        _, buffer = cv2.imencode('.jpg', frame_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-                        frame_data = buffer.tobytes()
+                    current_seq, frame_data = stream.frame_buffer[-1]
+                    if frame_data:
+                        # Resize if needed
+                        if stream.display_resolution:
+                            frame_data = stream.resize_jpeg(frame_data, stream.display_resolution)
 
                         try:
                             # Send as first frame in multipart stream (twice to satisfy Chrome/Edge/Webkit)
@@ -551,31 +587,38 @@ class StreamHandler(BaseHTTPRequestHandler):
                                 self.wfile.write(b'\r\n')
                                 self.wfile.flush()
                             last_seq = current_seq
-                        except:
+                        except (BrokenPipeError, ValueError):
+                            # Client disconnected during initial send
                             return
-            while not self.wfile.closed:
-                frame = None
+
+            while True:  # Changed from "while not self.wfile.closed" - more reliable
+                frame_data = None
                 current_seq = -1
 
                 with stream.buffer_lock:
                     if stream.frame_buffer:
-                        current_seq, frame = stream.frame_buffer[-1]
+                        current_seq, frame_data = stream.frame_buffer[-1]
 
-                if frame is not None and current_seq != last_seq:
-                    # Resize frame to display resolution
-                    frame_resized = cv2.resize(frame, stream.display_resolution)
-                    _, buffer = cv2.imencode('.jpg', frame_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-                    frame_data = buffer.tobytes()
+                if frame_data and current_seq != last_seq:
+                    # Resize if needed
+                    if stream.display_resolution:
+                        frame_data = stream.resize_jpeg(frame_data, stream.display_resolution)
 
                     try:
+                        # Check if we can write before attempting
+                        if self.wfile.closed:
+                            break
+
                         self.wfile.write(b'--frame\r\n')
                         self.wfile.write(b'Content-Type: image/jpeg\r\n')
                         self.wfile.write(f'Content-Length: {len(frame_data)}\r\n\r\n'.encode())
                         self.wfile.write(frame_data)
                         self.wfile.write(b'\r\n')
                         self.wfile.flush()
-                    except Exception as e:
-                        # Client disconnected
+                    except (BrokenPipeError, ValueError, OSError) as e:
+                        # Client disconnected or connection closed
+                        if stream.debug:
+                            stream.logger.debug(f"Client disconnected from {stream_name}: {e}")
                         break
 
                     last_seq = current_seq
@@ -587,7 +630,8 @@ class StreamHandler(BaseHTTPRequestHandler):
             self.server.receiver.logger.error(f"Error streaming {stream_name}: {e}")
         finally:
             try:
-                self.wfile.close()
+                if not self.wfile.closed:
+                    self.wfile.close()
             except:
                 pass
 
